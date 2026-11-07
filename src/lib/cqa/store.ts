@@ -238,7 +238,10 @@ export const useCqa = create<CqaState>()(
       },
       importDemo: () => get().importConversations(buildDemo(), "Демонстрационный набор, не API организаторов").added,
       importControl: () =>
-        get().importConversations(controlConversations(), "Локальный учебный набор из 10 диалогов, не официальный контроль").added,
+        get().importConversations(
+          controlConversations(),
+          `Локальный учебный набор из ${controlConversations().length} диалогов, не официальный контроль`,
+        ).added,
       importConversations: (incoming, note) => {
         let added = 0;
         set((state) => {
@@ -574,3 +577,30 @@ export function latestEvaluation(
     .filter((item) => item.conversationId === conversationId && (!versionId || item.checklistVersionId === versionId))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 }
+
+export interface ConversationFilterOptions {
+  language?: string;
+  channel?: string;
+  group?: string;
+}
+
+export function filterConversations(
+  conversations: Conversation[],
+  options?: ConversationFilterOptions,
+): Conversation[] {
+  if (!options) return conversations;
+  const { language = "all", channel = "all", group = "all" } = options;
+  return conversations.filter((item) => {
+    if (language !== "all" && item.language.toLowerCase() !== language.toLowerCase()) {
+      return false;
+    }
+    if (channel !== "all" && item.channel.toLowerCase() !== channel.toLowerCase()) {
+      return false;
+    }
+    if (group !== "all" && item.datasetGroupId.toLowerCase() !== group.toLowerCase()) {
+      return false;
+    }
+    return true;
+  });
+}
+

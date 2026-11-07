@@ -11,6 +11,45 @@ import { INPUT_USD_PER_M, MODEL_ID, OUTPUT_USD_PER_M } from "./types.ts";
 
 export type { CompleteResult, EvalErrorCode, EvalInput, EvalOutput, EvalResponse };
 
+export type ReasoningEffort = "none" | "low" | "medium" | "high";
+
+export function parseReasoningEffort(raw: string | undefined): ReasoningEffort | null {
+  if (!raw) return null;
+  const token = raw.trim().toLowerCase();
+  if (token === "none" || token === "low" || token === "medium" || token === "high") {
+    return token;
+  }
+  return null;
+}
+
+export interface ChatCompletionRequestBody {
+  model: string;
+  temperature: number;
+  max_tokens: number;
+  response_format: { type: "json_object" };
+  messages: { role: string; content: string }[];
+  reasoning_effort?: ReasoningEffort;
+}
+
+export function buildRequestBody(
+  model: string,
+  maxTokens: number,
+  messages: { role: string; content: string }[],
+  reasoningEffort?: ReasoningEffort | null,
+): ChatCompletionRequestBody {
+  const body: ChatCompletionRequestBody = {
+    model,
+    temperature: 0,
+    max_tokens: maxTokens,
+    response_format: { type: "json_object" },
+    messages,
+  };
+  if (reasoningEffort) {
+    body.reasoning_effort = reasoningEffort;
+  }
+  return body;
+}
+
 export interface LlmConfig {
   baseUrl: string;
   apiKey?: string;
@@ -20,6 +59,7 @@ export interface LlmConfig {
   priceInputPerM: number;
   priceOutputPerM: number;
   priceSource: "env" | "default" | "local";
+  reasoningEffort: ReasoningEffort | null;
 }
 
 export interface LlmInfo {
@@ -30,6 +70,7 @@ export interface LlmInfo {
   priceSource: "env" | "default" | "local";
   priceInputPerM?: number;
   priceOutputPerM?: number;
+  reasoningEffort: ReasoningEffort | null;
 }
 
 export function parsePrice(raw: string | undefined): number | undefined {
@@ -108,6 +149,8 @@ export function resolveLlmConfig(env: Record<string, string | undefined> = proce
     priceOutputPerM = OUTPUT_USD_PER_M;
   }
 
+  const reasoningEffort = parseReasoningEffort(env.LLM_REASONING_EFFORT);
+
   return {
     baseUrl,
     apiKey,
@@ -117,6 +160,7 @@ export function resolveLlmConfig(env: Record<string, string | undefined> = proce
     priceInputPerM,
     priceOutputPerM,
     priceSource,
+    reasoningEffort,
   };
 }
 
@@ -127,6 +171,7 @@ export async function fetchComplete(
   maxTokens: number,
   messages: { role: string; content: string }[],
   timeoutMs = 60000,
+  reasoningEffort?: ReasoningEffort | null,
 ): Promise<CompleteResult> {
   try {
     const headers: Record<string, string> = {
@@ -140,13 +185,7 @@ export async function fetchComplete(
       method: "POST",
       headers,
       signal: AbortSignal.timeout(timeoutMs),
-      body: JSON.stringify({
-        model,
-        temperature: 0,
-        max_tokens: maxTokens,
-        response_format: { type: "json_object" },
-        messages,
-      }),
+      body: JSON.stringify(buildRequestBody(model, maxTokens, messages, reasoningEffort)),
     });
 
     const retryAfterHeader = response.headers.get("retry-after");
@@ -188,6 +227,7 @@ export async function fetchComplete(
 
     if (!response.ok) {
       let detail = "";
+      let rawErrorText = "";
       try {
         const body = (await response.json()) as { error?: unknown; code?: unknown };
         const raw = body?.error;
@@ -198,6 +238,7 @@ export async function fetchComplete(
               ? String((raw as { message?: unknown }).message ?? "")
               : "";
         const code = typeof body.code === "string" ? (body.code.split(":").pop() ?? "") : "";
+        rawErrorText = `${code} ${message}`;
         const safeCode = /^[a-z0-9-]{1,40}$/.test(code) ? code : "";
         detail = `${safeCode ? `${safeCode}. ` : ""}${message}`
           .replace(/https?:\/\/\S+/g, "[url]")
@@ -209,6 +250,15 @@ export async function fetchComplete(
         }
       } catch {
         detail = "";
+      }
+
+      if (response.status === 400 && /api[ _]?key|api_key_invalid/i.test(rawErrorText || detail)) {
+        return {
+          ok: false,
+          status: response.status,
+          code: "auth",
+          error: detail ? `Провайдер LLM ответил 400: ${detail}` : "Провайдер LLM ответил 400: неверный API-ключ",
+        };
       }
 
       const isBadRequest = response.status === 400 || response.status === 422;
@@ -261,6 +311,7 @@ export const getLlmInfo = createServerFn({ method: "GET" })
         priceSource: config.priceSource,
         priceInputPerM: config.priceInputPerM,
         priceOutputPerM: config.priceOutputPerM,
+        reasoningEffort: config.reasoningEffort,
       };
     } catch {
       return {
@@ -271,6 +322,7 @@ export const getLlmInfo = createServerFn({ method: "GET" })
         priceSource: "default",
         priceInputPerM: INPUT_USD_PER_M,
         priceOutputPerM: OUTPUT_USD_PER_M,
+        reasoningEffort: null,
       };
     }
   });
@@ -300,7 +352,7 @@ export const evaluateConversation = createServerFn({ method: "POST" })
       return {
         ok: false,
         code: "no_api_key",
-        error: "Оценка Grok сейчас недоступна: на сервере нет ключа модели.",
+        error: "Оценка AI сейчас недоступна: на сервере нет ключа модели.",
       };
     }
 
@@ -311,7 +363,7 @@ export const evaluateConversation = createServerFn({ method: "POST" })
       { ...data, model },
       {
         complete: (mdl, maxTokens, messages) =>
-          fetchComplete(config.apiKey, config.baseUrl, mdl, maxTokens, messages, config.timeoutMs),
+          fetchComplete(config.apiKey, config.baseUrl, mdl, maxTokens, messages, config.timeoutMs, config.reasoningEffort),
         env: process.env,
         isLocal: config.isLocal,
         priceInputPerM: config.priceInputPerM,

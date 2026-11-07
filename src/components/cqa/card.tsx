@@ -189,7 +189,7 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
 
       <div className="flex flex-wrap items-center gap-2">
         <Button disabled={busy} onClick={() => void onGrok()}>
-          {busy ? "Считаю…" : "Оценить Grok"}
+          {busy ? "Считаю…" : "Оценить AI"}
         </Button>
         {llmInfo ? (
           <span className="text-xs text-muted">

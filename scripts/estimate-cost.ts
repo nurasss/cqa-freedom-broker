@@ -164,12 +164,12 @@ export function runEstimation(): void {
 
   console.log("");
   console.log("СРЕДНИЕ ЗНАЧЕНИЯ ПО ГРУППАМ:");
-  console.log(`• Демо-диалоги (14 шт):`);
+  console.log(`• Демо-диалоги (${demoEstimates.length} шт):`);
   console.log(`  - Входные токены за проход: ${avgDemo.avgInputTokens} (оценка: ${avgDemo.avgScoreTokens}, судья: ${avgDemo.avgJudgeTokens})`);
   console.log(`  - Выходные токены (допущение): 2300 (оценка 1500 + судья 800)`);
   console.log(`  - Стоимость диалога: от $${avgDemo.avgMinCost.toFixed(4)} (мин, 2 вызова) до $${avgDemo.avgMaxCost.toFixed(4)} (макс, 6 вызовов)`);
   console.log("");
-  console.log(`• Учебные диалоги (10 шт):`);
+  console.log(`• Учебные диалоги (${studyEstimates.length} шт):`);
   console.log(`  - Входные токены за проход: ${avgStudy.avgInputTokens} (оценка: ${avgStudy.avgScoreTokens}, судья: ${avgStudy.avgJudgeTokens})`);
   console.log(`  - Выходные токены (допущение): 2300 (оценка 1500 + судья 800)`);
   console.log(`  - Стоимость диалога: от $${avgStudy.avgMinCost.toFixed(4)} (мин, 2 вызова) до $${avgStudy.avgMaxCost.toFixed(4)} (макс, 6 вызовов)`);

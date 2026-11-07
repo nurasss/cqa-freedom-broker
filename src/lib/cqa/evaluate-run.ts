@@ -44,6 +44,7 @@ export interface EvaluationDeps {
   isLocal?: boolean;
   priceInputPerM?: number;
   priceOutputPerM?: number;
+  reasoningEffort?: "none" | "low" | "medium" | "high" | null;
 }
 
 export interface EvalInput {
@@ -107,8 +108,15 @@ export function extractJson(content: string): unknown {
   }
 }
 
-export function classifyErrorCode(status?: number, rawCode?: EvalErrorCode): EvalErrorCode {
+export function classifyErrorCode(
+  status?: number,
+  rawCode?: EvalErrorCode,
+  message?: string,
+): EvalErrorCode {
   if (rawCode) return rawCode;
+  if (status === 400 && message && /api[ _]?key|api_key_invalid/i.test(message)) {
+    return "auth";
+  }
   if (status === 404) return "model_not_found";
   if (status === 401 || status === 403) return "auth";
   if (status === 400 || status === 422) return "bad_request";
@@ -252,7 +260,7 @@ export async function runEvaluation(input: EvalInput, deps: EvaluationDeps): Pro
   for (let attempt = 0; attempt < 2; attempt++) {
     const result = await invokeWithTruncation(tracker, deps, model, evalMaxTokens, messages);
     if (!result.ok) {
-      const code = classifyErrorCode(result.status, result.code);
+      const code = classifyErrorCode(result.status, result.code, result.error);
       return { ok: false, error: result.error, code, usage: getUsage() };
     }
 

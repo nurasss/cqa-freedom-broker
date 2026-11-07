@@ -163,7 +163,7 @@ type Answerish = DraftAnswer["answer"];
 
 function reasonFor(id: string, answer: Answerish): string {
   const label = typeof answer === "number" ? String(answer) : answer === "yes" ? "ДА" : answer === "no" ? "НЕТ" : "N/A";
-  return `Эвристика ${id}: ${label}. Это не эталон жюри — для контрольной точности запустите Grok.`;
+  return `Эвристика ${id}: ${label}. Это не эталон жюри — для контрольной точности запустите AI-оценку.`;
 }
 
 function usesOfficialHandler(criterion: Criterion): boolean {

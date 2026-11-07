@@ -3,8 +3,9 @@ import { AudioLines, Play, Upload } from "lucide-react";
 import { parseImport } from "@/lib/cqa/engine";
 import { evaluateConversation, getLlmInfo, importOrganizerGroup, type LlmInfo } from "@/lib/cqa/ai-fns";
 import { createBatchRunner, mapCancelledItem } from "@/lib/cqa/queue";
-import { latestEvaluation, selectBatchTargets, useCqa } from "@/lib/cqa/store";
+import { filterConversations, latestEvaluation, selectBatchTargets, useCqa } from "@/lib/cqa/store";
 import { resultRows, resultsToCsv } from "@/lib/cqa/benchmark";
+import { controlConversations } from "@/lib/cqa/control";
 import type { BatchItemStatus } from "@/lib/cqa/types";
 import { MODEL_ID, PROMPT_VERSION } from "@/lib/cqa/types";
 import { Button, channelLabel, cx, formatTotal, inputClass, sourceLabel } from "./ui";
@@ -36,6 +37,7 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
   const version = versions.find((item) => item.id === activeVersionId);
   const [language, setLanguage] = useState("all");
   const [channel, setChannel] = useState("all");
+  const [selectedGroup, setSelectedGroup] = useState("all");
   const [groupId, setGroupId] = useState("DEV");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -75,14 +77,25 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
     return total / aiEvaluationsWithCost.length;
   }, [aiEvaluationsWithCost]);
 
+  const datasetGroups = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const c of conversations) {
+      counts.set(c.datasetGroupId, (counts.get(c.datasetGroupId) ?? 0) + 1);
+    }
+    return Array.from(counts.entries()).map(([id, count]) => ({
+      groupId: id,
+      count,
+    }));
+  }, [conversations]);
+
   const rows = useMemo(
     () =>
-      conversations.filter((item) => {
-        if (language !== "all" && item.language !== language) return false;
-        if (channel !== "all" && item.channel !== channel) return false;
-        return true;
+      filterConversations(conversations, {
+        language,
+        channel,
+        group: selectedGroup,
       }),
-    [conversations, language, channel],
+    [conversations, language, channel, selectedGroup],
   );
 
   const candidateTargets = useMemo(() => {
@@ -129,6 +142,7 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
         parsed.conversations,
         `API ${parsed.groupId}: чаты ${parsed.channels.chat}, звонки ${parsed.channels.call}`,
       );
+      setSelectedGroup(parsed.groupId);
       const expected =
         parsed.expected && parsed.expected !== parsed.conversations.length
           ? `Ожидалось ${parsed.expected}, разобрано ${parsed.conversations.length}.`
@@ -150,6 +164,7 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
         return;
       }
       importConversations(parsed.conversations, `Файл ${parsed.groupId}`);
+      setSelectedGroup(parsed.groupId);
       if (parsed.error) setError(parsed.error);
     } catch {
       setError("Файл не является JSON набора диалогов");
@@ -361,11 +376,25 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
             <Upload className="size-4" />
             JSON
           </Button>
-          <Button variant="ghost" disabled={busy} onClick={() => importDemo()}>
+          <Button
+            variant="ghost"
+            disabled={busy}
+            onClick={() => {
+              importDemo();
+              setSelectedGroup("DEMO");
+            }}
+          >
             Демо, 14
           </Button>
-          <Button variant="ghost" disabled={busy} onClick={() => importControl()}>
-            Учебные, 10
+          <Button
+            variant="ghost"
+            disabled={busy}
+            onClick={() => {
+              importControl();
+              setSelectedGroup("STUDY");
+            }}
+          >
+            Учебные, {controlConversations().length}
           </Button>
           <input
             ref={fileRef}
@@ -380,10 +409,34 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
           />
         </div>
         <p className="mt-3 text-sm text-muted">
-          {importNote} Импорт group_id всегда идёт в API организаторов, включая DEV. Демо и учебные 10 — отдельные кнопки, не официальный контроль и не результат модели.
+          {importNote} Импорт group_id всегда идёт в API организаторов, включая DEV. Демо и учебные диалоги — отдельные кнопки, не официальный контроль и не результат модели.
         </p>
         {error ? <p className="mt-2 text-sm text-critical">{error}</p> : null}
       </section>
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          className={cx(
+            "h-10 rounded-full px-3 text-sm font-semibold",
+            selectedGroup === "all" ? "bg-ink text-on-ink" : "bg-surface text-muted border border-line",
+          )}
+          onClick={() => setSelectedGroup("all")}
+        >
+          Все наборы
+        </button>
+        {datasetGroups.map((item) => (
+          <button
+            key={item.groupId}
+            className={cx(
+              "h-10 rounded-full px-3 text-sm font-semibold",
+              selectedGroup === item.groupId ? "bg-ink text-on-ink" : "bg-surface text-muted border border-line",
+            )}
+            onClick={() => setSelectedGroup(item.groupId)}
+          >
+            {item.groupId} · {item.count}
+          </button>
+        ))}
+      </div>
 
       <div className="flex flex-wrap gap-2">
         {["all", "RU", "KZ", "EN"].map((item) => (
@@ -418,7 +471,7 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
           Эвристика по списку
         </Button>
         <Button variant="primary" disabled={busy || !rows.length} onClick={() => setConfirmGrok(true)}>
-          Grok по списку
+          AI по списку
         </Button>
         <Button variant="ghost" disabled={busy} onClick={() => void runBatch("ai", true)}>
           Повторить неудачные
@@ -518,11 +571,11 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
       <div className="flex flex-wrap gap-2">
         <Button
           variant="ghost"
-          onClick={() => downloadText("cqa-results.json", JSON.stringify(resultRows(conversations, evaluations), null, 2), "application/json")}
+          onClick={() => downloadText("cqa-results.json", JSON.stringify(resultRows(rows, evaluations), null, 2), "application/json")}
         >
           Экспорт JSON
         </Button>
-        <Button variant="ghost" onClick={() => downloadText("cqa-results.csv", resultsToCsv(resultRows(conversations, evaluations)), "text/csv")}>
+        <Button variant="ghost" onClick={() => downloadText("cqa-results.csv", resultsToCsv(resultRows(rows, evaluations)), "text/csv")}>
           Экспорт CSV
         </Button>
       </div>
