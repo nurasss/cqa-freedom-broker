@@ -73,7 +73,9 @@ export function scoringPrompt(criteria: Criterion[], conversation: Conversation)
     .map((criterion) => {
       const scale = criterion.scale ? ` Ступени: ${criterion.scale.steps.join(", ")}. max=${criterion.scale.max}.` : "";
       const na = criterion.naAllowed ? " N/A разрешён только если это прямо следует из рубрики." : " N/A запрещён.";
-      return `${criterion.id} | ${criterion.title} | вес ${criterion.weight} | тип ${criterion.answerType}.${scale}${na}\nРубрика этой версии:\n${criterion.rubric}`;
+      const speakers = criterion.evidenceSpeakers?.length ? criterion.evidenceSpeakers : ["operator"];
+      const speakersInfo = ` Допустимые авторы цитат: ${speakers.join(", ")}.`;
+      return `${criterion.id} | ${criterion.title} | вес ${criterion.weight} | тип ${criterion.answerType}.${scale}${na}${speakersInfo}\nРубрика этой версии:\n${criterion.rubric}`;
     })
     .join("\n\n");
   const transcript = conversation.messages
@@ -82,7 +84,7 @@ export function scoringPrompt(criteria: Criterion[], conversation: Conversation)
   return [
     "Оцени каждый критерий только по рубрике, которая передана ниже для этой версии чек-листа.",
     "Идентификатор критерия ничего не значит сам по себе. Не подставляй старое правило, если его нет в тексте рубрики.",
-    "Действие и нарушение подтверждает только реплика operator. client, bot и system — контекст.",
+    "Действие подтверждают только авторы из списка допустимых для критерия (по умолчанию operator). Реплика client НИКОГДА не подтверждает действие или нарушение оператора. Нарушение C08=ДА подтверждает только operator.",
     "quote — точная подстрока text указанной реплики. message_index обязан совпадать.",
     "Для пропущенного действия оставь evidence пустым и укажи checked_range.",
     "Для N/A заполни na_reason. Не ставь N/A из-за неуверенности.",
@@ -113,8 +115,10 @@ export function judgePrompt(cases: JudgeCase[], messages: TranscriptMessage[]): 
           .join("\n")
       : "нет цитат";
     const range = item.checkedRange ? `${item.checkedRange.from}–${item.checkedRange.to}` : "нет";
+    const speakers = item.criterion.evidenceSpeakers?.length ? item.criterion.evidenceSpeakers : ["operator"];
+    const speakersInfo = ` Допустимые авторы цитат: ${speakers.join(", ")}.`;
     return [
-      `Критерий ${item.criterion.id}. Название: ${item.criterion.title}. Тип: ${item.criterion.answerType}. N/A ${item.criterion.naAllowed ? "разрешён рубрикой" : "запрещён"}.`,
+      `Критерий ${item.criterion.id}. Название: ${item.criterion.title}. Тип: ${item.criterion.answerType}. N/A ${item.criterion.naAllowed ? "разрешён рубрикой" : "запрещён"}.${speakersInfo}`,
       `Рубрика этой версии:\n${item.criterion.rubric}`,
       `Ответ модели: ${String(item.answer)}. Причина: ${item.reason}`,
       `Причина N/A: ${item.naReason ?? "нет"}`,
@@ -129,6 +133,7 @@ export function judgePrompt(cases: JudgeCase[], messages: TranscriptMessage[]): 
     "invalid: ответ противоречит рубрике. Это касается и ошибочного «да», и ошибочного «нет», и неверного N/A, и пропущенного обязательного действия.",
     "needs_review: по тексту нельзя уверенно решить. При сомнении не объявляй ответ верным.",
     "valid: ответ и доказательства согласованы с рубрикой.",
+    "Действие подтверждают только допустимые авторы для критерия (по умолчанию operator). Реплика client НИКОГДА не подтверждает действие или нарушение оператора. Нарушение C08=ДА подтверждает только operator.",
     "Запрос данных — не то же самое, что подтверждение, только если это сказано в рубрике.",
     "Верни JSON {\"verdicts\":[{\"criterion_id\":\"...\",\"status\":\"valid|invalid|needs_review\",\"explanation\":\"...\"}]} по каждому критерию.",
     "",

@@ -1,5 +1,6 @@
 import type { Answer, Criterion, TranscriptMessage } from "./types.ts";
 import { answerAllowed } from "./score.ts";
+import { officialCriteria } from "./seed.ts";
 
 export interface LocatedHit {
   message: TranscriptMessage;
@@ -15,7 +16,7 @@ export const confirmRe =
 const confirmDeniedRe =
   /личность\s+не\s+подтвержден|идентификация\s+не\s+пройден|identity\s+(?:is\s+)?not\s+confirmed|жеке бас\p{L}{0,4}\s+расталма/iu;
 export const protectedRe =
-  /на вашем сч[её]те|на счету\s+\d|шотыңызда|your balance is|the withdrawal is|вывод могу|(?:остаток|баланс|қалдық)\s*[—:\-]?\s*\d|(?:ваш\s+)?(?:иин|жсн|паспорт)\s*[:№]?\s*\d{6,}/iu;
+  /на вашем сч[её]те|на счету\s+\d|шотыңызда|your balance is|the withdrawal is|вывод могу|(?:остаток|баланс|қалдық)\s*[-—:]?\s*\d|(?:ваш\s+)?(?:иин|жсн|паспорт)\s*[:№]?\s*\d{6,}/iu;
 export const protectedRequestRe =
   /остаток|баланс|статус вывода|withdrawal|my balance|шотымда|на моём сч|на моем сч|мой иин|мой паспорт|номер карты/iu;
 
@@ -93,9 +94,63 @@ export function contactEstablished(messages: Pick<TranscriptMessage, "speaker" |
   return greetRe.test(first.text) && introRe.test(first.text) && !greetingLanguageMismatch(messages);
 }
 
-export function expectedRange(messages: TranscriptMessage[], _criterionId: string): { from: number; to: number } | null {
+export function isSubstantiveReply(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  const greetingOrIntroOnlyRe =
+    /^(?:здравств\p{L}*|добр\p{L}+\s+(?:день|вечер|утро)|привет\p{L}*|сәлем\p{L}*|hello|hi\b|good\s+(?:morning|afternoon|evening))[!.,\s]*(?:меня зовут\s+[\p{L}'-]+|мо[её] имя\s+[\p{L}'-]+|this is\s+[\p{L}'-]+|i am\s+[\p{L}'-]+)?[!.,\s]*(?:чем\s+(?:я\s+)?могу\s+(?:вам\s+)?помочь|слушаю вас|какой у вас вопрос)?[?.,!\s]*$/iu;
+  const waitPhraseRe =
+    /(?:^|[.,!?\s])(?:минуту|секунду|ожидайте|сейчас уточню|проверяю|подождите|один момент|сейчас посмотрю|секундочку|минуточку|күте тұрыңыз|please wait|one moment)/i;
+  if (greetingOrIntroOnlyRe.test(trimmed)) return false;
+  if (waitPhraseRe.test(trimmed) && !/\d|http|раздел|комисси|тариф|шотыңызда|баланс/i.test(trimmed)) {
+    return false;
+  }
+  const isQuestionOnly =
+    trimmed.endsWith("?") &&
+    /^(?:уточните|подскажите|назовите|о каком|какой именно|правильно ли я понимаю)/i.test(trimmed);
+  if (isQuestionOnly && !/\d|http|раздел|тариф|комисси/i.test(trimmed)) return false;
+  return true;
+}
+
+export function expectedRange(
+  messages: TranscriptMessage[],
+  criterionOrId: Criterion | string,
+): { from: number; to: number } | null {
   if (!messages.length) return null;
-  return { from: messages[0]!.messageIndex, to: messages[messages.length - 1]!.messageIndex };
+  const full = { from: messages[0]!.messageIndex, to: messages[messages.length - 1]!.messageIndex };
+  const id = typeof criterionOrId === "string" ? criterionOrId : criterionOrId.id;
+  const official = officialCriteria.find((item) => item.id === id);
+  if (!official) return full;
+  if (typeof criterionOrId === "object" && criterionOrId.rubric !== official.rubric) {
+    return full;
+  }
+  if (id === "C01") {
+    const firstOp = messages.find((item) => canonicalSpeaker(item.speaker) === "operator");
+    return {
+      from: messages[0]!.messageIndex,
+      to: firstOp ? firstOp.messageIndex : messages[messages.length - 1]!.messageIndex,
+    };
+  }
+  if (id === "C07") {
+    const slice = messages.slice(-3);
+    return {
+      from: slice[0]!.messageIndex,
+      to: messages[messages.length - 1]!.messageIndex,
+    };
+  }
+  if (id === "C02") {
+    const firstSubstantiveOp = messages.find(
+      (item) => canonicalSpeaker(item.speaker) === "operator" && isSubstantiveReply(item.text),
+    );
+    if (firstSubstantiveOp) {
+      return {
+        from: messages[0]!.messageIndex,
+        to: firstSubstantiveOp.messageIndex,
+      };
+    }
+    return full;
+  }
+  return full;
 }
 
 function rangeOk(messages: TranscriptMessage[], range: { from: number; to: number } | null): range is { from: number; to: number } {
@@ -123,12 +178,18 @@ export function judgeEvidence(
   const errors: string[] = [];
   const evidence: JudgedEvidence["evidence"] = [];
   let invalid = false;
-  const original = messages.map((item) => item.text);
   if (!answerAllowed(criterion, answer)) {
     invalid = true;
     errors.push(`${criterion.id}: недопустимый ответ для этой версии чек-листа`);
   }
   const kind = claimKind(criterion, answer);
+  const defaultSpeakers: ("operator" | "system" | "bot")[] = ["operator"];
+  const allowedSpeakers: ("operator" | "system" | "bot")[] =
+    criterion.id === "C08" || kind === "violation"
+      ? ["operator"]
+      : criterion.evidenceSpeakers?.length
+        ? criterion.evidenceSpeakers
+        : defaultSpeakers;
 
   for (const quote of quotes) {
     const text = quote.quote?.trim() ?? "";
@@ -152,7 +213,8 @@ export function judgeEvidence(
       speaker,
       timestampRaw: located.hit.timestampRaw,
     });
-    if ((kind === "action" || kind === "violation") && speaker !== "operator") {
+    const isAllowed = (allowedSpeakers as string[]).includes(speaker);
+    if ((kind === "action" || kind === "violation") && (!isAllowed || speaker === "client")) {
       invalid = true;
       errors.push(
         `${criterion.id}: цитата ${speaker} не подтверждает ${kind === "violation" ? "нарушение" : "действие"} оператора`,
@@ -166,17 +228,18 @@ export function judgeEvidence(
     errors.push(`${criterion.id}: диапазон вне транскрипта`);
   }
   if (kind === "absence" && !range && messages.length) {
-    range = expectedRange(messages, criterion.id);
+    range = expectedRange(messages, criterion);
   }
-  if ((kind === "action" || kind === "violation") && !evidence.some((item) => item.speaker === "operator")) {
+  if (
+    (kind === "action" || kind === "violation") &&
+    !evidence.some(
+      (item) => (allowedSpeakers as string[]).includes(item.speaker) && item.speaker !== "client",
+    )
+  ) {
     invalid = true;
     if (!errors.some((line) => line.startsWith(criterion.id))) {
       errors.push(`${criterion.id}: нет подтверждённой цитаты оператора`);
     }
-  }
-  if (messages.some((item, index) => item.text !== original[index])) {
-    invalid = true;
-    errors.push(`${criterion.id}: исходный текст реплики изменён`);
   }
   return { evidence, checkedRange: range, errors, invalid };
 }

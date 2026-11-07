@@ -13,6 +13,7 @@ export interface Criterion {
   naAllowed: boolean;
   scale?: { steps: number[]; max: number };
   rubric: string;
+  evidenceSpeakers?: ("operator" | "system" | "bot")[];
 }
 
 export interface ChecklistVersion {

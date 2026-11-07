@@ -1,6 +1,14 @@
 import type { Conversation, Criterion } from "./types.ts";
 import type { DraftAnswer } from "./engine.ts";
-import { confirmRe, contactEstablished, hasProtectedDisclosure, isIdentityConfirmation, protectedRe, protectedRequestRe } from "./evidence.ts";
+import {
+  canonicalSpeaker,
+  confirmRe,
+  contactEstablished,
+  hasProtectedDisclosure,
+  isIdentityConfirmation,
+  protectedRe,
+  protectedRequestRe,
+} from "./evidence.ts";
 import { officialCriteria } from "./seed.ts";
 
 type Msg = Conversation["messages"][number];
@@ -53,14 +61,20 @@ function c03(messages: Msg[]): DraftAnswer["answer"] {
   let confirmed = false;
   let protectedHit = false;
   let disclosedBefore = false;
-  const clientAsked = messages.some((item) => item.speaker === "client" && protectedRequestRe.test(item.text));
+  const clientAsked = messages.some(
+    (item) => canonicalSpeaker(item.speaker) === "client" && protectedRequestRe.test(item.text),
+  );
   for (const message of messages) {
-    if (message.speaker !== "operator") continue;
-    const confirmAt = isIdentityConfirmation(message.text) ? message.text.search(confirmRe) : -1;
-    const protectedAt = hasProtectedDisclosure(message.text) ? message.text.search(protectedRe) : -1;
-    if (protectedAt !== -1) protectedHit = true;
-    if (protectedAt !== -1 && !confirmed && (confirmAt === -1 || protectedAt < confirmAt)) disclosedBefore = true;
-    if (confirmAt !== -1) confirmed = true;
+    const speaker = canonicalSpeaker(message.speaker);
+    if (speaker === "operator") {
+      const confirmAt = isIdentityConfirmation(message.text) ? message.text.search(confirmRe) : -1;
+      const protectedAt = hasProtectedDisclosure(message.text) ? message.text.search(protectedRe) : -1;
+      if (protectedAt !== -1) protectedHit = true;
+      if (protectedAt !== -1 && !confirmed && (confirmAt === -1 || protectedAt < confirmAt)) disclosedBefore = true;
+      if (confirmAt !== -1) confirmed = true;
+    } else if (speaker === "system" || speaker === "bot") {
+      if (isIdentityConfirmation(message.text)) confirmed = true;
+    }
   }
   if (disclosedBefore || ((protectedHit || clientAsked) && !confirmed)) return "no";
   if (!protectedHit && !clientAsked) return "na";
@@ -190,7 +204,11 @@ export function rulesDrafts(criteria: Criterion[], conversation: Conversation): 
         : criterion.id === "C02" && answer === "yes"
           ? pick((text) => questionRe.test(text))
           : criterion.id === "C03" && answer === "yes"
-            ? pick((text) => isIdentityConfirmation(text))
+            ? messages.find(
+                (item) =>
+                  ["operator", "system", "bot"].includes(canonicalSpeaker(item.speaker)) &&
+                  isIdentityConfirmation(item.text),
+              ) ?? pick((text) => isIdentityConfirmation(text))
             : criterion.id === "C05" && answer === "yes"
               ? pick((text) => empathyRe.test(text) || politeRe.test(text))
               : criterion.id === "C07" && answer === "yes"

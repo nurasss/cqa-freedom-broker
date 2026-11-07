@@ -457,16 +457,76 @@ export const useCqa = create<CqaState>()(
       }),
       merge: (persisted, current) => {
         const saved = (persisted ?? {}) as Partial<CqaData>;
+        const currentOfficial = current.versions.find((v) => v.official) ?? officialVersion();
+        const savedVersions = saved.versions ?? [];
+        let versions: ChecklistVersion[];
+        const archiveMap = new Map<string, string>();
+
+        if (!savedVersions.length) {
+          versions = current.versions;
+        } else {
+          const hasMatchingOfficial = savedVersions.some(
+            (v) => v.configHash === currentOfficial.configHash,
+          );
+          if (hasMatchingOfficial) {
+            versions = savedVersions;
+          } else {
+            const preserved = savedVersions.map((v) => {
+              if (v.id === currentOfficial.id && v.configHash !== currentOfficial.configHash) {
+                const archiveId = `${v.id}-${v.configHash.slice(0, 6)}`;
+                archiveMap.set(`${v.id}::${v.configHash}`, archiveId);
+                return {
+                  ...v,
+                  id: archiveId,
+                  official: false,
+                  label: `${v.label} (архив ${v.configHash.slice(0, 6)})`,
+                };
+              }
+              return v;
+            });
+            versions = [currentOfficial, ...preserved];
+          }
+        }
+
+        const evaluations = (saved.evaluations ?? []).map((raw) => {
+          const norm = normalizeEvaluation(raw);
+          const key = `${norm.checklistVersionId}::${norm.configHash}`;
+          if (archiveMap.has(key)) {
+            return { ...norm, checklistVersionId: archiveMap.get(key)! };
+          }
+          return norm;
+        });
+
+        const jobs = (saved.jobs ?? []).map((raw) => {
+          const norm = normalizeJob(raw) as BatchJob & { checklistVersionId?: string; configHash?: string };
+          if (norm.checklistVersionId && norm.configHash) {
+            const key = `${norm.checklistVersionId}::${norm.configHash}`;
+            if (archiveMap.has(key)) {
+              return { ...norm, checklistVersionId: archiveMap.get(key)! };
+            }
+          }
+          return norm;
+        });
+
+        let activeVersionId = currentOfficial.id;
+        if (saved.activeVersionId) {
+          if (saved.activeVersionId === currentOfficial.id) {
+            activeVersionId = currentOfficial.id;
+          } else if (versions.some((v) => v.id === saved.activeVersionId)) {
+            activeVersionId = saved.activeVersionId;
+          }
+        }
+
         return {
           ...current,
           ...saved,
-          versions: saved.versions?.length ? saved.versions : current.versions,
-          activeVersionId: saved.activeVersionId || current.activeVersionId,
+          versions,
+          activeVersionId,
           conversations: saved.conversations?.length ? saved.conversations : current.conversations,
-          evaluations: (saved.evaluations ?? []).map(normalizeEvaluation),
+          evaluations,
           appeals: saved.appeals ?? [],
           decisions: saved.decisions ?? [],
-          jobs: (saved.jobs ?? []).map(normalizeJob),
+          jobs,
         };
       },
     },
