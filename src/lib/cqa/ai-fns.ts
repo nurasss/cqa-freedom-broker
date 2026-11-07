@@ -71,6 +71,7 @@ export interface LlmInfo {
   priceInputPerM?: number;
   priceOutputPerM?: number;
   reasoningEffort: ReasoningEffort | null;
+  timeoutMs?: number;
 }
 
 export function parsePrice(raw: string | undefined): number | undefined {
@@ -82,8 +83,8 @@ export function parsePrice(raw: string | undefined): number | undefined {
   return num;
 }
 
-export function resolveTimeoutMs(env: Record<string, string | undefined>, isLocal: boolean): number {
-  const defaultTimeout = isLocal ? 180000 : 60000;
+export function resolveTimeoutMs(env: Record<string, string | undefined>, _isLocal: boolean): number {
+  const defaultTimeout = 180000;
   const rawTimeout = env.LLM_TIMEOUT_MS?.trim();
   if (rawTimeout) {
     const num = Number(rawTimeout);
@@ -97,6 +98,7 @@ export function resolveTimeoutMs(env: Record<string, string | undefined>, isLoca
 export function resolveLlmConfig(env: Record<string, string | undefined> = process.env): LlmConfig {
   const rawBaseUrl = env.LLM_BASE_URL?.trim();
   let baseUrl = "https://api.x.ai/v1";
+  let host = "api.x.ai";
   let isLocal = false;
 
   if (rawBaseUrl) {
@@ -111,7 +113,7 @@ export function resolveLlmConfig(env: Record<string, string | undefined> = proce
       throw new Error("Некорректный LLM_BASE_URL: поддерживаются только протоколы http и https");
     }
 
-    const host = parsed.hostname.toLowerCase();
+    host = parsed.hostname.toLowerCase();
     isLocal =
       host === "localhost" ||
       host === "127.0.0.1" ||
@@ -149,7 +151,10 @@ export function resolveLlmConfig(env: Record<string, string | undefined> = proce
     priceOutputPerM = OUTPUT_USD_PER_M;
   }
 
-  const reasoningEffort = parseReasoningEffort(env.LLM_REASONING_EFFORT);
+  const rawEffort = env.LLM_REASONING_EFFORT;
+  const parsedEffort = parseReasoningEffort(rawEffort);
+  const isXAi = host === "api.x.ai";
+  const reasoningEffort = parsedEffort ?? (isXAi && (!rawEffort || !rawEffort.trim()) ? "low" : null);
 
   return {
     baseUrl,
@@ -172,6 +177,8 @@ export async function fetchComplete(
   messages: { role: string; content: string }[],
   timeoutMs = 60000,
   reasoningEffort?: ReasoningEffort | null,
+  priceInputPerM = INPUT_USD_PER_M,
+  priceOutputPerM = OUTPUT_USD_PER_M,
 ): Promise<CompleteResult> {
   try {
     const headers: Record<string, string> = {
@@ -273,15 +280,43 @@ export async function fetchComplete(
 
     const body = (await response.json()) as {
       choices?: { message?: { content?: string }; finish_reason?: string }[];
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        completion_tokens_details?: {
+          reasoning_tokens?: number;
+        };
+        cost_in_usd_ticks?: number;
+      };
     };
+
+    const promptTokens = body.usage?.prompt_tokens ?? 0;
+    const completionTokens = body.usage?.completion_tokens ?? 0;
+    const reasoningTokens = body.usage?.completion_tokens_details?.reasoning_tokens;
+    const ticks = body.usage?.cost_in_usd_ticks;
+
+    let costUsd: number;
+    let costSource: "provider" | "estimate";
+
+    if (typeof ticks === "number" && Number.isFinite(ticks)) {
+      costUsd = ticks * 1e-10;
+      costSource = "provider";
+    } else {
+      const outTokens = completionTokens + (reasoningTokens ?? 0);
+      const rawUsd = (promptTokens / 1_000_000) * priceInputPerM + (outTokens / 1_000_000) * priceOutputPerM;
+      costUsd = Math.round(rawUsd * 10_000) / 10_000;
+      costSource = "estimate";
+    }
 
     return {
       ok: true,
       content: body.choices?.[0]?.message?.content ?? "",
       finishReason: body.choices?.[0]?.finish_reason ?? null,
-      promptTokens: body.usage?.prompt_tokens ?? 0,
-      completionTokens: body.usage?.completion_tokens ?? 0,
+      promptTokens,
+      completionTokens,
+      costUsd,
+      costSource,
+      ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
     };
   } catch (err: unknown) {
     const isTimeout =
@@ -293,38 +328,44 @@ export async function fetchComplete(
   }
 }
 
+export function readLlmInfo(env: NodeJS.ProcessEnv = process.env): LlmInfo {
+  try {
+    const config = resolveLlmConfig(env);
+    let provider = "unknown";
+    try {
+      provider = new URL(config.baseUrl).hostname;
+    } catch {
+      provider = config.baseUrl;
+    }
+    return {
+      model: config.model,
+      provider,
+      isLocal: config.isLocal,
+      hasKey: Boolean(config.apiKey),
+      priceSource: config.priceSource,
+      priceInputPerM: config.priceInputPerM,
+      priceOutputPerM: config.priceOutputPerM,
+      reasoningEffort: config.reasoningEffort,
+      timeoutMs: config.timeoutMs,
+    };
+  } catch {
+    return {
+      model: MODEL_ID,
+      provider: "api.x.ai",
+      isLocal: false,
+      hasKey: false,
+      priceSource: "default",
+      priceInputPerM: INPUT_USD_PER_M,
+      priceOutputPerM: OUTPUT_USD_PER_M,
+      reasoningEffort: "low",
+      timeoutMs: 180000,
+    };
+  }
+}
+
 export const getLlmInfo = createServerFn({ method: "GET" })
   .handler(async (): Promise<LlmInfo> => {
-    try {
-      const config = resolveLlmConfig(process.env);
-      let provider = "unknown";
-      try {
-        provider = new URL(config.baseUrl).hostname;
-      } catch {
-        provider = config.baseUrl;
-      }
-      return {
-        model: config.model,
-        provider,
-        isLocal: config.isLocal,
-        hasKey: Boolean(config.apiKey),
-        priceSource: config.priceSource,
-        priceInputPerM: config.priceInputPerM,
-        priceOutputPerM: config.priceOutputPerM,
-        reasoningEffort: config.reasoningEffort,
-      };
-    } catch {
-      return {
-        model: MODEL_ID,
-        provider: "api.x.ai",
-        isLocal: false,
-        hasKey: false,
-        priceSource: "default",
-        priceInputPerM: INPUT_USD_PER_M,
-        priceOutputPerM: OUTPUT_USD_PER_M,
-        reasoningEffort: null,
-      };
-    }
+    return readLlmInfo(process.env);
   });
 
 export const evaluateConversation = createServerFn({ method: "POST" })
@@ -363,7 +404,17 @@ export const evaluateConversation = createServerFn({ method: "POST" })
       { ...data, model },
       {
         complete: (mdl, maxTokens, messages) =>
-          fetchComplete(config.apiKey, config.baseUrl, mdl, maxTokens, messages, config.timeoutMs, config.reasoningEffort),
+          fetchComplete(
+            config.apiKey,
+            config.baseUrl,
+            mdl,
+            maxTokens,
+            messages,
+            config.timeoutMs,
+            config.reasoningEffort,
+            config.priceInputPerM,
+            config.priceOutputPerM,
+          ),
         env: process.env,
         isLocal: config.isLocal,
         priceInputPerM: config.priceInputPerM,

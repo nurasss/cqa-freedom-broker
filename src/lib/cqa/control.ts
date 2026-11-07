@@ -35,21 +35,21 @@ export function controlCases(): ControlCase[] {
         ["00:01", "client", "Здравствуйте"],
         ["00:08", "operator", "Какой у вас вопрос по счёту?"],
       ]),
-      answers: { ...base, C01: "no", C02: "yes", C06: 7 },
+      answers: { ...base, C01: "no", C02: "yes", C04: "na", C05: "yes", C06: 10, C07: "na" },
     },
     {
       conversation: chat("c-ru-02", "RU", [
         ["00:01", "client", "Подскажите комиссию тарифа Стандарт по акциям США."],
         ["00:10", "operator", "Здравствуйте! Меня зовут Айгерим, Freedom Broker. Комиссия 0,3%, заявка в разделе Рынки. Могу ещё чем-то помочь. Хорошего дня!"],
       ]),
-      answers: { ...base, C01: "yes", C02: "na", C04: 15, C05: "yes", C06: 10, C07: "yes" },
+      answers: { ...base, C01: "yes", C02: "na", C04: 20, C05: "yes", C06: 10, C07: "yes" },
     },
     {
       conversation: chat("c-ru-03", "RU", [
         ["00:02", "client", "Это уже проблема, вы не отвечаете."],
         ["00:09", "operator", "Здравствуйте! Меня зовут Илья. Не пишите ерунду, вы зря отнимаете время."],
       ]),
-      answers: { ...base, C01: "yes", C05: "no", C06: 4, C08: "yes" },
+      answers: { ...base, C01: "yes", C05: "no", C06: 10, C08: "yes" },
     },
     {
       conversation: chat("c-ru-04", "RU", [
@@ -58,42 +58,42 @@ export function controlCases(): ControlCase[] {
         ["00:20", "client", "7730"],
         ["00:30", "operator", "Личность подтверждена. На вашем счёте 430000 тенге. Итого остаток назван. Хорошего дня!"],
       ]),
-      answers: { ...base, C01: "yes", C03: "yes", C04: 15, C05: "yes", C06: 10, C07: "yes" },
+      answers: { ...base, C01: "yes", C02: "na", C03: "yes", C04: 20, C05: "yes", C06: 10, C07: "yes" },
     },
     {
       conversation: chat("c-ru-05", "RU", [
         ["00:01", "client", "Какой остаток?"],
-        ["00:06", "operator", "Здравствуйте! Меня зовут Данияр. На вашем счёте 12000 тенге, проверка личности не нужна."],
+        ["00:06", "operator", "Здравствуйте! Меня зовут Данияр. На вашем счёте 12000 тенге."],
       ]),
-      answers: { ...base, C01: "yes", C03: "no", C04: 10, C05: "yes", C06: 7 },
+      answers: { ...base, C01: "yes", C02: "na", C03: "no", C04: 20, C05: "yes", C06: 10, C07: "no", C08: "no" },
     },
     {
       conversation: chat("c-kz-06", "KZ", [
         ["00:01", "client", "АҚШ акциясының комиссиясы қандай?"],
         ["00:09", "operator", "Сәлеметсіз бе! Менің атым Айгерім, Freedom Broker. Комиссия 0,3%, өтінім Markets бөлімінде. Тағы көмек керек пе? Сау болыңыз!"],
       ]),
-      answers: { ...base, C01: "yes", C02: "na", C04: 15, C05: "yes", C06: 10, C07: "yes" },
+      answers: { ...base, C01: "yes", C02: "na", C04: 20, C05: "yes", C06: 10, C07: "yes" },
     },
     {
       conversation: chat("c-kz-07", "KZ", [
         ["00:02", "client", "Шотты қалай толтырамын?"],
         ["00:11", "operator", "Сәлем! Менің атым Данияр. Қосымшадағы Толықтыру бөлімін ашыңыз, комиссия 0."],
       ]),
-      answers: { ...base, C01: "yes", C04: 10, C05: "yes", C06: 7, C07: "no" },
+      answers: { ...base, C01: "yes", C02: "na", C04: 20, C05: "yes", C06: 10, C07: "no" },
     },
     {
       conversation: chat("c-en-08", "EN", [
         ["00:01", "client", "What is the Standard tariff fee for US stocks?"],
         ["00:08", "operator", "Hello! My name is Aigerim, Freedom Broker. The fee is 0.3% and the order is placed in Markets. Anything else I can help with? Have a good day!"],
       ]),
-      answers: { ...base, C01: "yes", C02: "na", C04: 15, C05: "yes", C06: 10, C07: "yes" },
+      answers: { ...base, C01: "yes", C02: "na", C04: 20, C05: "yes", C06: 10, C07: "yes" },
     },
     {
       conversation: chat("c-en-09", "EN", [
         ["00:01", "client", "This delay is a real problem and I am unhappy."],
         ["00:07", "operator", "Hello! My name is Ilyas. The fee is 0.3% in the Markets section."],
       ]),
-      answers: { ...base, C01: "yes", C04: 10, C05: "no", C06: 7, C07: "no" },
+      answers: { ...base, C01: "yes", C02: "no", C04: 0, C05: "no", C06: 10, C07: "no" },
     },
     {
       conversation: chat("c-en-10", "EN", [
@@ -105,7 +105,7 @@ export function controlCases(): ControlCase[] {
 
     // --- RU: c-ru-11 .. c-ru-18 ---
 
-    // c-ru-11: C01 — оператор поздоровался в первом ответе, но представился только в следующем ответе после реплики клиента. По рубрике C01 представление позже первого ответа не засчитывается → C01: НЕТ. C07: ДА (предложение помощи + прощание).
+    // c-ru-11: C01 и C06 — оператор поздоровался в первом ответе, но представился только в следующем ответе после реплики клиента. По рубрике C01 представление позже первого ответа не засчитывается → C01: НЕТ. Клиенту пришлось переспросить → C06: 4. C07: ДА (предложение помощи + прощание).
     {
       conversation: chat("c-ru-11", "RU", [
         ["00:01", "client", "Здравствуйте, подскажите график работы офиса в Алматы."],
@@ -115,7 +115,7 @@ export function controlCases(): ControlCase[] {
         ["00:28", "client", "Спасибо, всё понятно."],
         ["00:35", "operator", "Если появятся вопросы — пишите, всегда на связи! Всего доброго, до свидания!"],
       ]),
-      answers: { ...base, C01: "no", C02: "na", C04: 20, C05: "yes", C06: 10, C07: "yes" },
+      answers: { ...base, C01: "no", C02: "na", C04: 20, C05: "yes", C06: 4, C07: "yes" },
     },
 
     // c-ru-12: C02 — клиент сообщил об ошибке без деталей; оператор уточнил недостающий текст ошибки до решения → C02: ДА.
@@ -150,7 +150,7 @@ export function controlCases(): ControlCase[] {
       conversation: chat("c-ru-14", "RU", [
         ["00:01", "client", "Здравствуйте! Как мне сформировать выписку по счёту в приложении?"],
         ["00:08", "operator", "Здравствуйте! Меня зовут Алина, Freedom Broker. Выписка формируется где-то в личном кабинете на сайте или в приложении."],
-        ["00:17", "client", "Ясно, конкретики нет, ладно, поищу сам."],
+        ["00:17", "client", "Хорошо, поищу сам."],
         ["00:24", "operator", "Если возникнут вопросы — обязательно пишите, поможем. Всего доброго, до свидания!"],
       ]),
       answers: { ...base, C01: "yes", C02: "na", C04: 5, C05: "yes", C06: 10, C07: "yes" },
@@ -220,7 +220,7 @@ export function controlCases(): ControlCase[] {
     {
       conversation: chat("c-kz-12", "KZ", [
         ["00:01", "client", "Сәлеметсіз бе! Теңгедегі шотты қалай толтыруға болады?"],
-        ["00:08", "operator", "Здравствуйте! Меня зовут Нұрлан, Freedom Broker. Шотты толтыру үшін Kaspi немесе кез келген банк картасы арқылы аударым жасай аласыз."],
+        ["00:08", "operator", "Здравствуйте! Меня зовут Нұрлан, Freedom Broker. Шотты толтыру үшін Менің шотым — Толықтыру бөліміне өтіп, банк картасы немесе Kaspi арқылы аударым жасай аласыз."],
         ["00:17", "client", "Түсіндім, рақмет."],
         ["00:23", "operator", "Тағы сұрақтарыңыз болса, міндетті түрде жазыңыз. Сау болыңыз, сәттілік тілеймін!"],
       ]),
@@ -305,8 +305,8 @@ export function controlCases(): ControlCase[] {
     // c-en-11: C01 — оператор поздоровался на английском и представился в первом ответе → C01: ДА. C07: ДА (предложение помощи + прощание).
     {
       conversation: chat("c-en-11", "EN", [
-        ["00:01", "client", "Hello, what are the trading hours for the US market?"],
-        ["00:08", "operator", "Hello! My name is Alex, Freedom Broker. The main trading session runs from 14:30 to 21:00 UTC. Is there anything else I can help you with?"],
+        ["00:01", "client", "Hello, where can I check the trading schedule for US stocks in the app?"],
+        ["00:08", "operator", "Hello! My name is Alex, Freedom Broker. You can find the full schedule in the Markets section under Trading Calendar. Is there anything else I can help you with?"],
         ["00:16", "client", "That is all, thank you!"],
         ["00:22", "operator", "You are welcome! If you have any further questions, please feel free to ask. Have a wonderful day, goodbye!"],
       ]),

@@ -58,3 +58,41 @@ export function mediaOffset(
 
   return null;
 }
+
+export function parseTimestampToSeconds(value: string | undefined): number | null {
+  if (!value) return null;
+  const exact = parseExact(value);
+  if (exact !== null) return exact;
+  const isoMs = parseIso(value);
+  if (isoMs !== null) return Math.floor(isoMs / 1000);
+  return null;
+}
+
+export function formatPause(seconds: number): string {
+  const rounded = Math.round(seconds);
+  if (rounded >= 3600) {
+    const h = Math.floor(rounded / 3600);
+    const m = Math.floor((rounded % 3600) / 60);
+    const s = rounded % 60;
+    return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  }
+  const m = Math.floor(rounded / 60);
+  const s = rounded % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+export function getPauseNote(
+  current: { timestampRaw?: string },
+  previous?: { timestampRaw?: string },
+): string {
+  if (!previous || !previous.timestampRaw || !current.timestampRaw) return "";
+  const tPrev = parseTimestampToSeconds(previous.timestampRaw);
+  const tCurr = parseTimestampToSeconds(current.timestampRaw);
+  if (tPrev === null || tCurr === null) return "";
+  const diffSec = tCurr - tPrev;
+  if (diffSec >= 60) {
+    return ` (пауза ${formatPause(diffSec)})`;
+  }
+  return "";
+}
+

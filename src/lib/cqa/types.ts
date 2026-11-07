@@ -68,6 +68,8 @@ export interface UsageInfo {
   completionTokens: number;
   estimatedCostUsd: number;
   calls: number;
+  reasoningTokens?: number;
+  costSource?: "provider" | "estimate";
 }
 
 export type EvalSource = "ai" | "heuristic" | "manual" | "demo";
@@ -142,7 +144,7 @@ export const SECTION_LABEL: Record<SectionId, string> = {
   custom: "Дополнительно",
 };
 
-export const PROMPT_VERSION = "cqa-s5-v4.1";
-export const MODEL_ID = "grok-4.5";
+export const PROMPT_VERSION = "cqa-s5-v5";
+export const MODEL_ID = "grok-4.7";
 export const INPUT_USD_PER_M = 2;
 export const OUTPUT_USD_PER_M = 6;

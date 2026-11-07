@@ -68,8 +68,12 @@ test("Stage G: resolveLlmConfig correctly parses LLM_REASONING_EFFORT", () => {
   const cfg3 = resolveLlmConfig({ LLM_REASONING_EFFORT: "invalid" });
   assert.equal(cfg3.reasoningEffort, null);
 
-  const cfg4 = resolveLlmConfig({});
+  const cfg4 = resolveLlmConfig({ LLM_BASE_URL: "https://openrouter.ai/api/v1" });
   assert.equal(cfg4.reasoningEffort, null);
+
+  // xAI defaults to "low" when unset
+  const cfgXAi = resolveLlmConfig({});
+  assert.equal(cfgXAi.reasoningEffort, "low");
 });
 
 test("Stage G: buildRequestBody includes reasoning_effort only when set", () => {

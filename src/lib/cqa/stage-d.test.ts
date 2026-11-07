@@ -321,7 +321,7 @@ test("Stage D: 404 response classifies as model_not_found and stops queue immedi
   assert.ok(pendingItems.length >= 8, `Expected >= 8 pending items, got ${pendingItems.length}`);
 });
 
-test("Stage D: timeout defaults to 180000 for localhost and 60000 for cloud, LLM_TIMEOUT_MS overrides", () => {
+test("Stage D: timeout defaults to 180000 for localhost and 180000 for cloud, LLM_TIMEOUT_MS overrides", () => {
   const localDefault = resolveLlmConfig({ LLM_BASE_URL: "http://localhost:11434/v1" });
   assert.equal(localDefault.timeoutMs, 180000);
 
@@ -329,7 +329,7 @@ test("Stage D: timeout defaults to 180000 for localhost and 60000 for cloud, LLM
   assert.equal(ipLocalDefault.timeoutMs, 180000);
 
   const cloudDefault = resolveLlmConfig({});
-  assert.equal(cloudDefault.timeoutMs, 60000);
+  assert.equal(cloudDefault.timeoutMs, 180000);
 
   const customOverride = resolveLlmConfig({ LLM_TIMEOUT_MS: "45000" });
   assert.equal(customOverride.timeoutMs, 45000);
@@ -342,7 +342,7 @@ test("Stage D: timeout defaults to 180000 for localhost and 60000 for cloud, LLM
 
   // Invalid timeout falls back to default
   const invalidTimeout = resolveLlmConfig({ LLM_TIMEOUT_MS: "not-a-number" });
-  assert.equal(invalidTimeout.timeoutMs, 60000);
+  assert.equal(invalidTimeout.timeoutMs, 180000);
 });
 
 test("Stage D: isLocal results in estimatedCostUsd = 0 with non-zero tokens", async () => {

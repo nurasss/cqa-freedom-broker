@@ -1,5 +1,7 @@
 import type { Assembled } from "./engine.ts";
 import type { Answer, Conversation, Criterion, TranscriptMessage } from "./types.ts";
+import { getPauseNote } from "./media.ts";
+import { getGuidanceForCriterion } from "./guidance.ts";
 
 export type JudgeStatus = "valid" | "invalid" | "needs_review";
 
@@ -52,18 +54,37 @@ export function contextWindows(messages: TranscriptMessage[], item: JudgeCase): 
   return windows;
 }
 
-function formatMessages(messages: TranscriptMessage[]): string {
-  return messages.map((message) => `[${message.messageIndex}] ${message.timestampRaw} ${message.speaker}: ${message.text}`).join("\n");
+export function buildPauseMap(messages: TranscriptMessage[]): Map<number, string> {
+  const pauseMap = new Map<number, string>();
+  const sorted = [...messages].sort((a, b) => a.messageIndex - b.messageIndex);
+  for (let i = 1; i < sorted.length; i++) {
+    const curr = sorted[i];
+    const prev = sorted[i - 1];
+    if (curr && prev && curr.messageIndex === prev.messageIndex + 1) {
+      const note = getPauseNote(curr, prev);
+      if (note) pauseMap.set(curr.messageIndex, note);
+    }
+  }
+  return pauseMap;
 }
 
-function formatWindows(windows: TranscriptMessage[][]): string {
+function formatMessages(messages: TranscriptMessage[], pauseMap?: Map<number, string>): string {
+  return messages
+    .map((message) => {
+      const pause = pauseMap?.get(message.messageIndex) ?? "";
+      return `[${message.messageIndex}] ${message.timestampRaw}${pause} ${message.speaker}: ${message.text}`;
+    })
+    .join("\n");
+}
+
+function formatWindows(windows: TranscriptMessage[][], pauseMap?: Map<number, string>): string {
   if (!windows.length) return "пусто";
-  if (windows.length === 1) return formatMessages(windows[0] ?? []);
+  if (windows.length === 1) return formatMessages(windows[0] ?? [], pauseMap);
   return windows
     .map((window, index) => {
       const first = window[0]?.messageIndex;
       const last = window[window.length - 1]?.messageIndex;
-      return `фрагмент ${index + 1}/${windows.length} (индексы ${first}–${last})\n${formatMessages(window)}`;
+      return `фрагмент ${index + 1}/${windows.length} (индексы ${first}–${last})\n${formatMessages(window, pauseMap)}`;
     })
     .join("\n");
 }
@@ -75,11 +96,17 @@ export function scoringPrompt(criteria: Criterion[], conversation: Conversation)
       const na = criterion.naAllowed ? " N/A разрешён только если это прямо следует из рубрики." : " N/A запрещён.";
       const speakers = criterion.evidenceSpeakers?.length ? criterion.evidenceSpeakers : ["operator"];
       const speakersInfo = ` Допустимые авторы цитат: ${speakers.join(", ")}.`;
-      return `${criterion.id} | ${criterion.title} | вес ${criterion.weight} | тип ${criterion.answerType}.${scale}${na}${speakersInfo}\nРубрика этой версии:\n${criterion.rubric}`;
+      const guidance = getGuidanceForCriterion(criterion);
+      const guidanceBlock = guidance ? `\nМетодическое уточнение:\n${guidance}` : "";
+      return `${criterion.id} | ${criterion.title} | вес ${criterion.weight} | тип ${criterion.answerType}.${scale}${na}${speakersInfo}\nРубрика этой версии:\n${criterion.rubric}${guidanceBlock}`;
     })
     .join("\n\n");
+  const pauseMap = buildPauseMap(conversation.messages);
   const transcript = conversation.messages
-    .map((message) => `[${message.messageIndex}] ${message.timestampRaw} ${message.speaker}: ${message.text}`)
+    .map((message) => {
+      const pause = pauseMap.get(message.messageIndex) ?? "";
+      return `[${message.messageIndex}] ${message.timestampRaw}${pause} ${message.speaker}: ${message.text}`;
+    })
     .join("\n");
   return [
     "Оцени каждый критерий только по рубрике, которая передана ниже для этой версии чек-листа.",
@@ -103,12 +130,13 @@ export function scoringPrompt(criteria: Criterion[], conversation: Conversation)
 }
 
 export function judgePrompt(cases: JudgeCase[], messages: TranscriptMessage[]): string {
+  const pauseMap = buildPauseMap(messages);
   const contexts = cases.map((item) => contextWindows(messages, item));
   const shared = contexts.some((windows) => windows.flat().length === messages.length && messages.length > 0);
   const blocks = cases.map((item, index) => {
     const windows = contexts[index] ?? [];
     const coversAll = windows.flat().length === messages.length && messages.length > 0;
-    const context = coversAll ? "полный диалог вынесен общим транскриптом ниже; индексы исходные, конец не отброшен" : formatWindows(windows);
+    const context = coversAll ? "полный диалог вынесен общим транскриптом ниже; индексы исходные, конец не отброшен" : formatWindows(windows, pauseMap);
     const evidence = item.evidence.length
       ? item.evidence
           .map((quote) => `[${quote.messageIndex}] ${quote.timestampRaw} ${quote.speaker}: "${quote.quote}"`)
@@ -117,9 +145,11 @@ export function judgePrompt(cases: JudgeCase[], messages: TranscriptMessage[]): 
     const range = item.checkedRange ? `${item.checkedRange.from}–${item.checkedRange.to}` : "нет";
     const speakers = item.criterion.evidenceSpeakers?.length ? item.criterion.evidenceSpeakers : ["operator"];
     const speakersInfo = ` Допустимые авторы цитат: ${speakers.join(", ")}.`;
+    const guidance = getGuidanceForCriterion(item.criterion);
+    const guidanceBlock = guidance ? `\nМетодическое уточнение:\n${guidance}` : "";
     return [
       `Критерий ${item.criterion.id}. Название: ${item.criterion.title}. Тип: ${item.criterion.answerType}. N/A ${item.criterion.naAllowed ? "разрешён рубрикой" : "запрещён"}.${speakersInfo}`,
-      `Рубрика этой версии:\n${item.criterion.rubric}`,
+      `Рубрика этой версии:\n${item.criterion.rubric}${guidanceBlock}`,
       `Ответ модели: ${String(item.answer)}. Причина: ${item.reason}`,
       `Причина N/A: ${item.naReason ?? "нет"}`,
       `Доказательства:\n${evidence}`,
@@ -138,7 +168,7 @@ export function judgePrompt(cases: JudgeCase[], messages: TranscriptMessage[]): 
     "Верни JSON {\"verdicts\":[{\"criterion_id\":\"...\",\"status\":\"valid|invalid|needs_review\",\"explanation\":\"...\"}]} по каждому критерию.",
     "",
     blocks.join("\n\n"),
-    shared ? `\nОБЩИЙ ТРАНСКРИПТ (фрагменты по ${JUDGE_WINDOW} реплик, индексы исходные):\n${formatWindows(contextWindows(messages, { criterion: cases[0]!.criterion, answer: cases[0]!.answer, reason: "", naReason: null, evidence: [], checkedRange: { from: messages[0]?.messageIndex ?? 0, to: messages[messages.length - 1]?.messageIndex ?? 0 } }))}` : "",
+    shared ? `\nОБЩИЙ ТРАНСКРИПТ (фрагменты по ${JUDGE_WINDOW} реплик, индексы исходные):\n${formatWindows(contextWindows(messages, { criterion: cases[0]!.criterion, answer: cases[0]!.answer, reason: "", naReason: null, evidence: [], checkedRange: { from: messages[0]?.messageIndex ?? 0, to: messages[messages.length - 1]?.messageIndex ?? 0 } }), pauseMap)}` : "",
   ].join("\n");
 }
 

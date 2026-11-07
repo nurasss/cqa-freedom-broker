@@ -15,6 +15,9 @@ export interface CompleteSuccess {
   finishReason?: string | null;
   promptTokens: number;
   completionTokens: number;
+  reasoningTokens?: number;
+  costUsd?: number;
+  costSource?: "provider" | "estimate";
 }
 
 export type EvalErrorCode = "no_api_key" | "auth" | "bad_request" | "transient" | "model_not_found";
@@ -27,6 +30,9 @@ export interface CompleteFailure {
   retryAfter?: number;
   promptTokens?: number;
   completionTokens?: number;
+  reasoningTokens?: number;
+  costUsd?: number;
+  costSource?: "provider" | "estimate";
 }
 
 export type CompleteResult = CompleteSuccess | CompleteFailure;
@@ -77,9 +83,11 @@ export function estimateCost(
   isLocal = false,
   priceInputPerM = INPUT_USD_PER_M,
   priceOutputPerM = OUTPUT_USD_PER_M,
+  reasoningTokens = 0,
 ): number {
   if (isLocal) return 0;
-  const usd = (promptTokens / 1_000_000) * priceInputPerM + (completionTokens / 1_000_000) * priceOutputPerM;
+  const effectiveOutputTokens = completionTokens + reasoningTokens;
+  const usd = (promptTokens / 1_000_000) * priceInputPerM + (effectiveOutputTokens / 1_000_000) * priceOutputPerM;
   return Math.round(usd * 10_000) / 10_000;
 }
 
@@ -151,6 +159,9 @@ export function isRetryableResult(result: CompleteFailure): boolean {
 interface CallTracker {
   promptTokens: number;
   completionTokens: number;
+  reasoningTokens: number;
+  providerCostUsd: number;
+  hasProviderCost: boolean;
   calls: number;
   trace: string[];
 }
@@ -171,6 +182,13 @@ async function invokeWithRetry(
     const result = await deps.complete(model, maxTokens, messages);
     tracker.promptTokens += result.promptTokens ?? 0;
     tracker.completionTokens += result.completionTokens ?? 0;
+    if (typeof result.reasoningTokens === "number") {
+      tracker.reasoningTokens += result.reasoningTokens;
+    }
+    if (typeof result.costUsd === "number" && result.costSource === "provider") {
+      tracker.providerCostUsd += result.costUsd;
+      tracker.hasProviderCost = true;
+    }
 
     if (result.ok) {
       tracker.trace.push(`вызов ${tracker.calls}: in ${result.promptTokens} / out ${result.completionTokens}`);
@@ -227,22 +245,41 @@ export async function runEvaluation(input: EvalInput, deps: EvaluationDeps): Pro
   const tracker: CallTracker = {
     promptTokens: 0,
     completionTokens: 0,
+    reasoningTokens: 0,
+    providerCostUsd: 0,
+    hasProviderCost: false,
     calls: 0,
     trace: [`model ${model}`, `prompt ${PROMPT_VERSION}`],
   };
 
-  const getUsage = (): UsageInfo => ({
-    promptTokens: tracker.promptTokens,
-    completionTokens: tracker.completionTokens,
-    estimatedCostUsd: estimateCost(
-      tracker.promptTokens,
-      tracker.completionTokens,
-      isLocal,
-      priceInputPerM,
-      priceOutputPerM,
-    ),
-    calls: tracker.calls,
-  });
+  const getUsage = (): UsageInfo => {
+    let estimatedCostUsd: number;
+    let costSource: "provider" | "estimate";
+
+    if (tracker.hasProviderCost) {
+      costSource = "provider";
+      estimatedCostUsd = isLocal ? 0 : Math.round(tracker.providerCostUsd * 10_000) / 10_000;
+    } else {
+      costSource = "estimate";
+      estimatedCostUsd = estimateCost(
+        tracker.promptTokens,
+        tracker.completionTokens,
+        isLocal,
+        priceInputPerM,
+        priceOutputPerM,
+        tracker.reasoningTokens,
+      );
+    }
+
+    return {
+      promptTokens: tracker.promptTokens,
+      completionTokens: tracker.completionTokens,
+      reasoningTokens: tracker.reasoningTokens > 0 ? tracker.reasoningTokens : undefined,
+      estimatedCostUsd,
+      costSource,
+      calls: tracker.calls,
+    };
+  };
 
   const system =
     "Ты модуль Conversation Quality Analytics Freedom Broker. Отвечай только JSON по рубрике переданной версии. Итог в баллах не вычисляй.";
