@@ -380,7 +380,7 @@ test("batch evaluation keeps the checklist captured at start", () => {
 
 test("local study set is ten RU KZ EN transcripts and not the official control group", () => {
   const cases = controlCases();
-  assert.equal(cases.length, 10);
+  assert.equal(cases.length, 34);
   const languages = new Set(cases.map((item) => item.conversation.language));
   assert.deepEqual([...languages].sort(), ["EN", "KZ", "RU"]);
   for (const item of cases) {
@@ -418,7 +418,7 @@ test("benchmark metrics are local and not organizer ground truth", () => {
     predicted: Object.fromEntries(rulesDrafts(officialCriteria, item.conversation).map((row) => [row.criterionId, row.answer])) as Record<string, Answer>,
   }));
   const report = evaluateBenchmark(officialCriteria, heuristic);
-  assert.equal(report.compared, 10);
+  assert.equal(report.compared, 34);
   assert.ok(report.mae === null || Number.isFinite(report.mae));
   assert.ok(report.byLanguage.RU);
   assert.ok(report.scaleConfusion.C04);
