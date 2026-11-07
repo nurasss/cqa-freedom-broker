@@ -2,7 +2,8 @@ import { useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { evaluateConversation } from "@/lib/cqa/ai-fns";
 import type { DraftAnswer } from "@/lib/cqa/engine";
-import { parseMediaOffset, safeAudioUrl } from "@/lib/cqa/engine";
+import { safeAudioUrl } from "@/lib/cqa/engine";
+import { mediaOffset } from "@/lib/cqa/media";
 import { allowedAnswers, computeScore, formatAnswer } from "@/lib/cqa/score";
 import { latestEvaluation, useCqa } from "@/lib/cqa/store";
 import type { Answer, Criterion, Evaluation } from "@/lib/cqa/types";
@@ -27,6 +28,7 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
   const [error, setError] = useState("");
   const [manual, setManual] = useState(false);
   const [picks, setPicks] = useState<Record<string, Answer>>({});
+  const [seekNote, setSeekNote] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
 
   const evaluation = conversation && version ? latestEvaluation(evaluations, conversation.id, version.id) : undefined;
@@ -57,9 +59,13 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
     setRange(checked);
     const target = index ?? checked?.from;
     if (target === undefined) return;
-    const message = dialog.messages.find((item) => item.messageIndex === target);
-    const offset = message ? parseMediaOffset(message.timestampRaw) : null;
-    if (offset !== null && audioRef.current) audioRef.current.currentTime = offset;
+    const offset = mediaOffset(dialog.messages, target);
+    if (offset !== null) {
+      if (audioRef.current) audioRef.current.currentTime = offset.seconds;
+      setSeekNote(offset.approximate ? "≈ по времени первой реплики" : null);
+    } else {
+      setSeekNote(null);
+    }
     document.getElementById(`msg-${conversationId}-${target}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
@@ -168,7 +174,8 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
         <div className="rounded-2xl border border-line bg-surface p-4">
           <p className="mb-2 text-sm font-semibold text-ink">Запись</p>
           <audio ref={audioRef} controls preload="none" src={audio} className="w-full" />
-          <p className="mt-2 text-xs text-muted">Клик по реплике с меткой мм:сс перематывает запись. Отдельной голосовой рубрики организаторы не публиковали.</p>
+          <p className="mt-2 text-xs text-muted">Клик по реплике с меткой времени перематывает запись. Отдельной голосовой рубрики организаторы не публиковали.</p>
+          {seekNote ? <p className="mt-1 text-xs font-medium text-accent">{seekNote}</p> : null}
         </div>
       ) : null}
 
@@ -299,6 +306,9 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
                   <button className="w-full text-left" onClick={() => focusEvidence(message.messageIndex, null)}>
                     <span className="font-mono text-xs text-muted">
                       {message.messageIndex} · {message.timestampRaw} · {message.speaker}
+                      {active && seekNote ? (
+                        <span className="ml-2 font-sans font-medium text-accent">({seekNote})</span>
+                      ) : null}
                     </span>
                     <span className={cx("mt-1 block text-sm leading-6", operator ? "text-ink font-medium" : "text-ink")}>
                       {message.text}

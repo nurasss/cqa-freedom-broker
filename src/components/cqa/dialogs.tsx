@@ -2,11 +2,14 @@ import { useMemo, useRef, useState } from "react";
 import { AudioLines, Play, Upload } from "lucide-react";
 import { parseImport } from "@/lib/cqa/engine";
 import { evaluateConversation, importOrganizerGroup } from "@/lib/cqa/ai-fns";
-import { createBatchRunner } from "@/lib/cqa/queue";
+import { createBatchRunner, mapCancelledItem } from "@/lib/cqa/queue";
 import { latestEvaluation, selectBatchTargets, useCqa } from "@/lib/cqa/store";
 import { resultRows, resultsToCsv } from "@/lib/cqa/benchmark";
+import type { BatchItemStatus } from "@/lib/cqa/types";
 import { MODEL_ID, PROMPT_VERSION } from "@/lib/cqa/types";
 import { Button, channelLabel, cx, formatTotal, inputClass, sourceLabel } from "./ui";
+
+export const DEFAULT_COST_ESTIMATE_USD = 0.05;
 
 function downloadText(filename: string, text: string, type: string) {
   const blob = new Blob([text], { type });
@@ -40,11 +43,25 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
   const [concurrency, setConcurrency] = useState(2);
   const [modelId, setModelId] = useState(MODEL_ID);
   const [costCap, setCostCap] = useState(8);
-  const [maxDialogs, setMaxDialogs] = useState(3);
+  const [maxDialogs, setMaxDialogs] = useState<number | "">("");
   const [spent, setSpent] = useState(0);
   const cancelRef = useRef(false);
   const runnerRef = useRef(createBatchRunner());
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const aiEvaluationsWithCost = useMemo(
+    () =>
+      evaluations.filter(
+        (e) => e.source === "ai" && typeof e.usage?.estimatedCostUsd === "number" && e.usage.estimatedCostUsd > 0,
+      ),
+    [evaluations],
+  );
+
+  const avgCostPerDialog = useMemo(() => {
+    if (!aiEvaluationsWithCost.length) return 0;
+    const total = aiEvaluationsWithCost.reduce((sum, e) => sum + (e.usage?.estimatedCostUsd ?? 0), 0);
+    return total / aiEvaluationsWithCost.length;
+  }, [aiEvaluationsWithCost]);
 
   const rows = useMemo(
     () =>
@@ -55,6 +72,26 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
       }),
     [conversations, language, channel],
   );
+
+  const candidateTargets = useMemo(() => {
+    const versionNow = versions.find((item) => item.id === activeVersionId);
+    if (!versionNow) return [];
+    const requestedModel = /^[A-Za-z0-9._-]{1,64}$/.test(modelId.trim()) ? modelId.trim() : MODEL_ID;
+    const selected = selectBatchTargets({
+      conversationIds: rows.map((conversation) => conversation.id),
+      evaluations,
+      versionId: versionNow.id,
+      configHash: versionNow.configHash,
+      mode: "ai",
+      modelId: requestedModel,
+      promptVersion: PROMPT_VERSION,
+      onlyFailed: false,
+    });
+    const parsedLimit = typeof maxDialogs === "number" && maxDialogs > 0 ? maxDialogs : undefined;
+    return rows
+      .filter((conversation) => selected.includes(conversation.id))
+      .slice(0, parsedLimit ? parsedLimit : selected.length);
+  }, [rows, evaluations, versions, activeVersionId, modelId, maxDialogs]);
 
   async function onImportGroup() {
     setError("");
@@ -132,10 +169,10 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
       onlyFailed,
       failedJobIds,
     });
-    const limit = Math.max(1, Math.min(200, Math.floor(maxDialogs) || 1));
+    const parsedLimit = typeof maxDialogs === "number" && maxDialogs > 0 ? maxDialogs : undefined;
     const targets = rows
       .filter((conversation) => selected.includes(conversation.id))
-      .slice(0, mode === "ai" && !onlyFailed ? limit : selected.length);
+      .slice(0, mode === "ai" && !onlyFailed && parsedLimit ? parsedLimit : selected.length);
     if (!targets.length) {
       setError(
         onlyFailed
@@ -158,22 +195,25 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
         concurrency: mode === "ai" ? concurrency : 4,
         maxAttempts: 3,
         retryDelayMs: mode === "ai" ? 600 : 0,
+        costCap: mode === "ai" ? costCap : undefined,
+        estimateCostUsd: mode === "ai" ? (avgCostPerDialog > 0 ? avgCostPerDialog : DEFAULT_COST_ESTIMATE_USD) : 0,
         isCancelled: () => cancelRef.current,
         onUpdate: (items) => {
-          const needsReview = items.filter((item) => item.status === "needs_review").length;
-          const failed = items.filter((item) => item.status === "failed").length;
-          const completed = items.filter((item) => item.status === "completed" || item.status === "needs_review").length;
+          const resolvedItems = items.map((item) => (cancelRef.current ? mapCancelledItem(item) : item));
+          const needsReview = resolvedItems.filter((item) => item.status === "needs_review").length;
+          const failed = resolvedItems.filter((item) => item.status === "failed").length;
+          const completed = resolvedItems.filter((item) => item.status === "completed" || item.status === "needs_review").length;
           patchJob(jobId, {
             completed,
             failed,
             needsReview,
-            items: items.map((item) => ({
+            items: resolvedItems.map((item) => ({
               conversationId: item.id,
-              status: item.status === "cancelled" ? "failed" : item.status,
+              status: item.status as BatchItemStatus,
               attempts: item.attempts,
               message: item.message,
             })),
-            errors: items
+            errors: resolvedItems
               .filter((item) => item.message && item.status === "failed")
               .map((item) => ({ conversationId: item.id, message: item.message ?? "ошибка" })),
           });
@@ -186,17 +226,21 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
             return saved.status === "needs_review" ? "needs_review" : "completed";
           }
           const startedAt = new Date().toISOString();
-          if (spentNow >= costCap) {
-            cancelRef.current = true;
-            throw new Error("Достигнут лимит расходов. Успешные оценки сохранены.");
-          }
           const response = await evaluateConversation({
             data: { conversation, criteria: frozen.criteria, model: requestedModel },
           });
-          if (!response.ok) throw new Error(response.error);
-          spentNow += response.usage?.estimatedCostUsd ?? 0;
-          setSpent(Math.round(spentNow * 10_000) / 10_000);
-          if (spentNow >= costCap) cancelRef.current = true;
+          const actualCost = response.usage?.estimatedCostUsd;
+          if (typeof actualCost === "number") {
+            spentNow += actualCost;
+            setSpent(Math.round(spentNow * 10_000) / 10_000);
+          }
+          if (!response.ok) {
+            const err = new Error(response.error);
+            if (typeof actualCost === "number") {
+              (err as { costUsd?: number }).costUsd = actualCost;
+            }
+            throw err;
+          }
           useCqa.getState().saveModelEvaluation(
             {
               conversationId: conversation.id,
@@ -209,15 +253,31 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
             response,
           );
           if (response.status === "failed") throw new Error(response.error ?? "Оценка не принята");
-          return response.status === "needs_review" ? "needs_review" : "completed";
+          return {
+            status: response.status === "needs_review" ? "needs_review" : "completed",
+            costUsd: actualCost,
+          };
         },
       });
-      patchJob(jobId, {
-        status: outcome.status,
-        completed: outcome.completed + outcome.needsReview,
-        failed: outcome.failed,
-        needsReview: outcome.needsReview,
-      });
+      const processed = outcome.completed + outcome.needsReview;
+      if (outcome.stoppedByBudget) {
+        const budgetMessage = `Остановлено по лимиту расходов $${costCap}: обработано ${processed} из ${targets.length}. Оставшиеся можно запустить повторно — уже оценённые не будут оплачены второй раз.`;
+        patchJob(jobId, {
+          status: outcome.status,
+          completed: processed,
+          failed: outcome.failed,
+          needsReview: outcome.needsReview,
+          errors: [{ conversationId: "-", message: budgetMessage }],
+        });
+        setError(budgetMessage);
+      } else {
+        patchJob(jobId, {
+          status: outcome.status,
+          completed: processed,
+          failed: outcome.failed,
+          needsReview: outcome.needsReview,
+        });
+      }
     } catch (reason) {
       patchJob(jobId, {
         status: "failed",
@@ -348,8 +408,17 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
             min={1}
             max={200}
             aria-label="лимит диалогов"
+            placeholder="все"
             value={maxDialogs}
-            onChange={(event) => setMaxDialogs(Math.max(1, Math.min(200, Number(event.target.value) || 1)))}
+            onChange={(event) => {
+              const val = event.target.value.trim();
+              if (!val) {
+                setMaxDialogs("");
+              } else {
+                const num = Number(val);
+                setMaxDialogs(Number.isFinite(num) && num > 0 ? Math.max(1, Math.min(200, Math.floor(num))) : "");
+              }
+            }}
           />
         </label>
         <label className="flex items-center gap-2 text-sm text-muted">
@@ -372,7 +441,11 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
       </div>
       {confirmGrok ? (
         <div className="rounded-2xl border border-line bg-accent-soft p-4 text-sm text-ink">
-          Пакет оценит до {maxDialogs} диалогов фильтра, у которых ещё нет AI-оценки с моделью {modelId || MODEL_ID}, промптом {PROMPT_VERSION} и текущей версией чек-листа. Эвристика и ручная разметка такой оценкой не считаются. Параллельность {concurrency}, лимит расходов ${costCap}. Повтор сети — до трёх попыток. Демо и эвристика не записываются как AI.
+          Пакет оценит {candidateTargets.length} диалогов фильтра, у которых ещё нет AI-оценки с моделью {modelId || MODEL_ID}, промптом {PROMPT_VERSION} и текущей версией чек-листа.{" "}
+          {aiEvaluationsWithCost.length > 0
+            ? `Примерная стоимость: ~$${(avgCostPerDialog * candidateTargets.length).toFixed(4)} (средняя прошлых AI-оценок $${avgCostPerDialog.toFixed(4)} × ${candidateTargets.length}). `
+            : "Прошлых AI-оценок нет, примерная стоимость неизвестна. "}
+          Параллельность {concurrency}, лимит расходов ${costCap}. Повтор сети — до трёх попыток. Демо и эвристика не записываются как AI.
           <div className="mt-3 flex gap-2">
             <Button onClick={() => void runBatch("ai")}>Запустить</Button>
             <Button variant="ghost" onClick={() => setConfirmGrok(false)}>
