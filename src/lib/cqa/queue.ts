@@ -15,6 +15,9 @@ export interface QueueOutcome {
   needsReview: number;
   spent?: number;
   stoppedByBudget?: boolean;
+  stoppedByFatal?: boolean;
+  fatalCode?: string;
+  fatalMessage?: string;
 }
 
 export interface WorkResult {
@@ -34,6 +37,16 @@ export interface QueueOptions<T> {
   isCancelled?: () => boolean;
   onUpdate?: (items: QueueSnapshot[]) => void;
   work: (payload: T, attempt: number) => Promise<WorkReturn>;
+}
+
+export function isFatalQueueError(reason: unknown): boolean {
+  if (!reason || typeof reason !== "object") return false;
+  if ("fatal" in reason && Boolean((reason as { fatal?: unknown }).fatal)) return true;
+  if ("code" in reason) {
+    const code = (reason as { code?: unknown }).code;
+    if (code === "no_api_key" || code === "auth" || code === "model_not_found") return true;
+  }
+  return false;
 }
 
 export function resolveCancelledStatus(
@@ -83,6 +96,9 @@ export async function runQueue<T>(options: QueueOptions<T>): Promise<QueueOutcom
   let spent = 0;
   let reserved = 0;
   let stoppedByBudget = false;
+  let stoppedByFatal = false;
+  let fatalCode: string | undefined;
+  let fatalMessage: string | undefined;
 
   const costCap = typeof options.costCap === "number" && options.costCap > 0 ? options.costCap : undefined;
 
@@ -139,6 +155,20 @@ export async function runQueue<T>(options: QueueOptions<T>): Promise<QueueOutcom
           if (costFromError !== undefined) spent += costFromError;
         }
 
+        const isFatal = isFatalQueueError(reason);
+        if (isFatal) {
+          stoppedByFatal = true;
+          if (typeof reason === "object" && reason !== null) {
+            if ("code" in reason && typeof (reason as { code?: unknown }).code === "string") {
+              fatalCode = (reason as { code: string }).code;
+            }
+          }
+          if (!fatalCode) {
+            fatalCode = "auth";
+          }
+          fatalMessage = reason instanceof Error ? reason.message : "фатальная ошибка";
+        }
+
         if (options.isCancelled?.()) {
           snapshot.status = "failed";
           snapshot.message = "отменено";
@@ -149,7 +179,7 @@ export async function runQueue<T>(options: QueueOptions<T>): Promise<QueueOutcom
         snapshot.status = "failed";
         snapshot.message = reason instanceof Error ? reason.message : "ошибка";
         publish();
-        if (snapshot.attempts >= maxAttempts) return;
+        if (isFatal || snapshot.attempts >= maxAttempts) return;
         if (options.retryDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, options.retryDelayMs));
         if (costCap !== undefined) {
           reserved += estimate;
@@ -161,6 +191,7 @@ export async function runQueue<T>(options: QueueOptions<T>): Promise<QueueOutcom
   async function worker() {
     while (cursor < items.length) {
       if (options.isCancelled?.()) return;
+      if (stoppedByFatal) return;
 
       const nextIndex = cursor;
       const nextItem = items[nextIndex];
@@ -217,5 +248,16 @@ export async function runQueue<T>(options: QueueOptions<T>): Promise<QueueOutcom
   const hasPendingFromBudget = items.some((item) => item.status === "pending") && stoppedByBudget;
   const outcomeStoppedByBudget = !options.isCancelled?.() && hasPendingFromBudget;
 
-  return { status, items, completed, failed, needsReview, spent, stoppedByBudget: outcomeStoppedByBudget };
+  return {
+    status,
+    items,
+    completed,
+    failed,
+    needsReview,
+    spent,
+    stoppedByBudget: outcomeStoppedByBudget,
+    stoppedByFatal,
+    fatalCode,
+    fatalMessage,
+  };
 }

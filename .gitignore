@@ -9,3 +9,4 @@ dist
 .DS_Store
 screenshots/*.png
 artifacts/*.zip
+.claude/

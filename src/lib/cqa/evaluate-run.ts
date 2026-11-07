@@ -17,10 +17,13 @@ export interface CompleteSuccess {
   completionTokens: number;
 }
 
+export type EvalErrorCode = "no_api_key" | "auth" | "bad_request" | "transient" | "model_not_found";
+
 export interface CompleteFailure {
   ok: false;
   error: string;
   status?: number;
+  code?: EvalErrorCode;
   retryAfter?: number;
   promptTokens?: number;
   completionTokens?: number;
@@ -38,6 +41,7 @@ export interface EvaluationDeps {
   complete: CompleteFn;
   sleep?: (ms: number) => Promise<void>;
   env?: Record<string, string | undefined>;
+  isLocal?: boolean;
 }
 
 export interface EvalInput {
@@ -60,9 +64,12 @@ export interface EvalOutput {
   error?: string;
 }
 
-export type EvalResponse = EvalOutput | { ok: false; error: string; usage?: UsageInfo };
+export type EvalResponse =
+  | EvalOutput
+  | { ok: false; error: string; code?: EvalErrorCode; usage?: UsageInfo };
 
-export function estimateCost(promptTokens: number, completionTokens: number): number {
+export function estimateCost(promptTokens: number, completionTokens: number, isLocal = false): number {
+  if (isLocal) return 0;
   const usd = (promptTokens / 1_000_000) * INPUT_USD_PER_M + (completionTokens / 1_000_000) * OUTPUT_USD_PER_M;
   return Math.round(usd * 10_000) / 10_000;
 }
@@ -92,7 +99,23 @@ export function extractJson(content: string): unknown {
   }
 }
 
+export function classifyErrorCode(status?: number, rawCode?: EvalErrorCode): EvalErrorCode {
+  if (rawCode) return rawCode;
+  if (status === 404) return "model_not_found";
+  if (status === 401 || status === 403) return "auth";
+  if (status === 400 || status === 422) return "bad_request";
+  return "transient";
+}
+
 export function isRetryableResult(result: CompleteFailure): boolean {
+  if (
+    result.code === "no_api_key" ||
+    result.code === "auth" ||
+    result.code === "model_not_found" ||
+    result.code === "bad_request"
+  ) {
+    return false;
+  }
   // Ошибки без статуса (сеть, таймаут, AbortError) повторяемые
   if (result.status === undefined || result.status === null) {
     return true;
@@ -175,11 +198,12 @@ async function invokeWithTruncation(
 export async function runEvaluation(input: EvalInput, deps: EvaluationDeps): Promise<EvalResponse> {
   const env = deps.env ?? process.env;
   const requested = input.model?.trim() ?? "";
-  const model = /^[A-Za-z0-9._-]{1,64}$/.test(requested) ? requested : MODEL_ID;
+  const model = /^[A-Za-z0-9._:/-]{1,128}$/.test(requested) ? requested : MODEL_ID;
 
-  const evalMaxTokens = parseTokenLimit(env?.XAI_MAX_TOKENS, 6000);
-  const judgeMaxTokens = parseTokenLimit(env?.XAI_JUDGE_MAX_TOKENS, 3000);
+  const evalMaxTokens = parseTokenLimit(env?.LLM_MAX_TOKENS || env?.XAI_MAX_TOKENS, 6000);
+  const judgeMaxTokens = parseTokenLimit(env?.LLM_JUDGE_MAX_TOKENS || env?.XAI_JUDGE_MAX_TOKENS, 3000);
 
+  const isLocal = Boolean(deps.isLocal);
   const tracker: CallTracker = {
     promptTokens: 0,
     completionTokens: 0,
@@ -190,7 +214,7 @@ export async function runEvaluation(input: EvalInput, deps: EvaluationDeps): Pro
   const getUsage = (): UsageInfo => ({
     promptTokens: tracker.promptTokens,
     completionTokens: tracker.completionTokens,
-    estimatedCostUsd: estimateCost(tracker.promptTokens, tracker.completionTokens),
+    estimatedCostUsd: estimateCost(tracker.promptTokens, tracker.completionTokens, isLocal),
     calls: tracker.calls,
   });
 
@@ -210,7 +234,8 @@ export async function runEvaluation(input: EvalInput, deps: EvaluationDeps): Pro
   for (let attempt = 0; attempt < 2; attempt++) {
     const result = await invokeWithTruncation(tracker, deps, model, evalMaxTokens, messages);
     if (!result.ok) {
-      return { ok: false, error: result.error, usage: getUsage() };
+      const code = classifyErrorCode(result.status, result.code);
+      return { ok: false, error: result.error, code, usage: getUsage() };
     }
 
     let parsed: unknown;

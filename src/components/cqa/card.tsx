@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
-import { evaluateConversation } from "@/lib/cqa/ai-fns";
+import { evaluateConversation, getLlmInfo, type LlmInfo } from "@/lib/cqa/ai-fns";
 import type { DraftAnswer } from "@/lib/cqa/engine";
 import { safeAudioUrl } from "@/lib/cqa/engine";
 import { mediaOffset } from "@/lib/cqa/media";
@@ -29,7 +29,14 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
   const [manual, setManual] = useState(false);
   const [picks, setPicks] = useState<Record<string, Answer>>({});
   const [seekNote, setSeekNote] = useState<string | null>(null);
+  const [llmInfo, setLlmInfo] = useState<LlmInfo | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+
+  useEffect(() => {
+    getLlmInfo()
+      .then((info) => setLlmInfo(info))
+      .catch(() => {});
+  }, []);
 
   const evaluation = conversation && version ? latestEvaluation(evaluations, conversation.id, version.id) : undefined;
   const outcome = useMemo(() => {
@@ -72,18 +79,19 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
   async function onGrok() {
     setBusy(true);
     setError("");
+    const targetModel = llmInfo?.model ?? MODEL_ID;
     const startedAt = new Date().toISOString();
     const binding = {
       conversationId: dialog.id,
       checklistVersionId: checklist.id,
       configHash: checklist.configHash,
-      modelId: MODEL_ID,
+      modelId: targetModel,
       promptVersion: PROMPT_VERSION,
       startedAt,
     };
     const criteria = checklist.criteria;
     try {
-      const response = await evaluateConversation({ data: { conversation: dialog, criteria } });
+      const response = await evaluateConversation({ data: { conversation: dialog, criteria, model: targetModel } });
       if (!response.ok) {
         setError(response.error);
         return;
@@ -179,10 +187,15 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
         </div>
       ) : null}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button disabled={busy} onClick={() => void onGrok()}>
           {busy ? "Считаю…" : "Оценить Grok"}
         </Button>
+        {llmInfo ? (
+          <span className="text-xs text-muted">
+            {llmInfo.isLocal ? `локальная: ${llmInfo.provider}` : llmInfo.provider}
+          </span>
+        ) : null}
         <Button variant="ghost" disabled={busy} onClick={() => evaluateRules(dialog.id)}>
           Эвристика
         </Button>

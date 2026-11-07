@@ -1,7 +1,7 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AudioLines, Play, Upload } from "lucide-react";
 import { parseImport } from "@/lib/cqa/engine";
-import { evaluateConversation, importOrganizerGroup } from "@/lib/cqa/ai-fns";
+import { evaluateConversation, getLlmInfo, importOrganizerGroup, type LlmInfo } from "@/lib/cqa/ai-fns";
 import { createBatchRunner, mapCancelledItem } from "@/lib/cqa/queue";
 import { latestEvaluation, selectBatchTargets, useCqa } from "@/lib/cqa/store";
 import { resultRows, resultsToCsv } from "@/lib/cqa/benchmark";
@@ -42,12 +42,24 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
   const [confirmGrok, setConfirmGrok] = useState(false);
   const [concurrency, setConcurrency] = useState(2);
   const [modelId, setModelId] = useState(MODEL_ID);
+  const [llmInfo, setLlmInfo] = useState<LlmInfo | null>(null);
   const [costCap, setCostCap] = useState(8);
   const [maxDialogs, setMaxDialogs] = useState<number | "">("");
   const [spent, setSpent] = useState(0);
   const cancelRef = useRef(false);
   const runnerRef = useRef(createBatchRunner());
   const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    getLlmInfo()
+      .then((info) => {
+        setLlmInfo(info);
+        if (info.model) {
+          setModelId(info.model);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const aiEvaluationsWithCost = useMemo(
     () =>
@@ -76,7 +88,8 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
   const candidateTargets = useMemo(() => {
     const versionNow = versions.find((item) => item.id === activeVersionId);
     if (!versionNow) return [];
-    const requestedModel = /^[A-Za-z0-9._-]{1,64}$/.test(modelId.trim()) ? modelId.trim() : MODEL_ID;
+    const defaultModel = llmInfo?.model ?? MODEL_ID;
+    const requestedModel = /^[A-Za-z0-9._:/-]{1,128}$/.test(modelId.trim()) ? modelId.trim() : defaultModel;
     const selected = selectBatchTargets({
       conversationIds: rows.map((conversation) => conversation.id),
       evaluations,
@@ -91,7 +104,7 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
     return rows
       .filter((conversation) => selected.includes(conversation.id))
       .slice(0, parsedLimit ? parsedLimit : selected.length);
-  }, [rows, evaluations, versions, activeVersionId, modelId, maxDialogs]);
+  }, [rows, evaluations, versions, activeVersionId, modelId, maxDialogs, llmInfo?.model]);
 
   async function onImportGroup() {
     setError("");
@@ -157,7 +170,8 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
     };
     const aiJob = state.jobs.find((item) => item.mode === "ai");
     const failedJobIds = (aiJob?.items ?? []).filter((item) => item.status === "failed").map((item) => item.conversationId);
-    const requestedModel = /^[A-Za-z0-9._-]{1,64}$/.test(modelId.trim()) ? modelId.trim() : MODEL_ID;
+    const defaultModel = llmInfo?.model ?? MODEL_ID;
+    const requestedModel = /^[A-Za-z0-9._:/-]{1,128}$/.test(modelId.trim()) ? modelId.trim() : defaultModel;
     const selected = selectBatchTargets({
       conversationIds: rows.map((conversation) => conversation.id),
       evaluations: state.evaluations,
@@ -239,6 +253,12 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
             if (typeof actualCost === "number") {
               (err as { costUsd?: number }).costUsd = actualCost;
             }
+            if (response.code) {
+              (err as { code?: string }).code = response.code;
+            }
+            if (response.code === "no_api_key" || response.code === "auth" || response.code === "model_not_found") {
+              (err as { fatal?: boolean }).fatal = true;
+            }
             throw err;
           }
           useCqa.getState().saveModelEvaluation(
@@ -260,7 +280,24 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
         },
       });
       const processed = outcome.completed + outcome.needsReview;
-      if (outcome.stoppedByBudget) {
+      if (outcome.stoppedByFatal) {
+        const fatalNotice =
+          outcome.fatalCode === "no_api_key"
+            ? "Пакет остановлен: на сервере нет ключа модели"
+            : outcome.fatalCode === "auth"
+              ? "Пакет остановлен: ключ отклонён"
+              : outcome.fatalCode === "model_not_found"
+                ? `Пакет остановлен: провайдер не знает модель ${requestedModel}`
+                : `Пакет остановлен: ${outcome.fatalMessage ?? "фатальная ошибка"}`;
+        patchJob(jobId, {
+          status: outcome.status,
+          completed: processed,
+          failed: outcome.failed,
+          needsReview: outcome.needsReview,
+          errors: [{ conversationId: "-", message: fatalNotice }],
+        });
+        setError(fatalNotice);
+      } else if (outcome.stoppedByBudget) {
         const budgetMessage = `Остановлено по лимиту расходов $${costCap}: обработано ${processed} из ${targets.length}. Оставшиеся можно запустить повторно — уже оценённые не будут оплачены второй раз.`;
         patchJob(jobId, {
           status: outcome.status,
@@ -399,6 +436,11 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
             value={modelId}
             onChange={(event) => setModelId(event.target.value)}
           />
+          {llmInfo ? (
+            <span className="text-xs text-muted">
+              {llmInfo.isLocal ? `локальная: ${llmInfo.provider}` : llmInfo.provider}
+            </span>
+          ) : null}
         </label>
         <label className="flex items-center gap-2 text-sm text-muted">
           Диалогов
