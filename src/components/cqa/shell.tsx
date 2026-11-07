@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ClipboardCheck, ListChecks, MessagesSquare, Scale } from "lucide-react";
+import { AlertTriangle, ClipboardCheck, ListChecks, MessagesSquare, Scale } from "lucide-react";
 import { useCqa } from "@/lib/cqa/store";
 import type { Role } from "@/lib/cqa/types";
 import { AppealsView } from "./appeals";
@@ -23,6 +23,8 @@ export function Shell() {
   const role = useCqa((state) => state.role);
   const setRole = useCqa((state) => state.setRole);
   const importDemo = useCqa((state) => state.importDemo);
+  const storageError = useCqa((state) => state.storageError);
+  const clearStorageError = useCqa((state) => state.clearStorageError);
 
   useEffect(() => {
     let cancel = false;
@@ -70,6 +72,29 @@ export function Shell() {
           </select>
         </label>
       </header>
+      {storageError ? (
+        <aside
+          role="alert"
+          aria-live="assertive"
+          className="sticky top-16 z-20 border-b border-critical bg-critical-soft px-4 py-3 text-sm text-critical shadow-sm"
+        >
+          <div className="mx-auto flex max-w-6xl items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="size-5 shrink-0" />
+              <span>
+                Хранилище браузера переполнено — последние изменения не сохранены. Сделайте «Экспорт JSON» и удалите старые наборы.
+              </span>
+            </div>
+            <button
+              type="button"
+              className="shrink-0 text-xs font-semibold underline hover:no-underline"
+              onClick={clearStorageError}
+            >
+              Закрыть
+            </button>
+          </div>
+        </aside>
+      ) : null}
       <div className="mx-auto grid w-full max-w-6xl lg:grid-cols-[220px_1fr]">
         <nav className="fixed inset-x-0 bottom-0 z-20 flex border-t border-line bg-surface lg:static lg:flex-col lg:border-t-0 lg:border-r lg:pt-4">
           {nav.map((item) => {

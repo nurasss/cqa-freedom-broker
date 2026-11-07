@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { createJSONStorage, persist, type PersistStorage, type StateStorage } from "zustand/middleware";
 import { buildDemo } from "./demo.ts";
 import { controlConversations } from "./control.ts";
 import { assemble, type DraftAnswer } from "./engine.ts";
@@ -43,7 +43,29 @@ export interface ModelPayload {
   error?: string;
 }
 
-interface CqaData {
+export interface DatasetGroupStats {
+  conversations: number;
+  evaluations: number;
+  appeals: number;
+  decisions: number;
+  conversationsCount: number;
+  evaluationsCount: number;
+  appealsCount: number;
+  decisionsCount: number;
+}
+
+export interface DeleteDatasetGroupResult {
+  conversations: number;
+  evaluations: number;
+  appeals: number;
+  decisions: number;
+  conversationsCount: number;
+  evaluationsCount: number;
+  appealsCount: number;
+  decisionsCount: number;
+}
+
+export interface CqaData {
   versions: ChecklistVersion[];
   activeVersionId: string;
   conversations: Conversation[];
@@ -53,9 +75,10 @@ interface CqaData {
   jobs: BatchJob[];
   role: Role;
   importNote: string;
+  storageError: boolean;
 }
 
-interface CqaState extends CqaData {
+export interface CqaState extends CqaData {
   setRole: (role: Role) => void;
   setActiveVersion: (id: string) => void;
   importDemo: () => number;
@@ -77,6 +100,109 @@ interface CqaState extends CqaData {
   exportSnapshot: () => string;
   importSnapshot: (raw: string) => string | null;
   resetLocal: () => void;
+  clearStorageError: () => void;
+  deleteDatasetGroup: (groupId: string) => DeleteDatasetGroupResult;
+}
+
+export function getDatasetGroupStats(state: CqaData, groupId: string): DatasetGroupStats {
+  const targetConvIds = new Set(
+    state.conversations.filter((c) => c.datasetGroupId === groupId).map((c) => c.id),
+  );
+  const targetEvalIds = new Set(
+    state.evaluations.filter((e) => targetConvIds.has(e.conversationId)).map((e) => e.id),
+  );
+  const targetAppealIds = new Set(
+    state.appeals.filter((a) => targetEvalIds.has(a.evaluationId)).map((a) => a.id),
+  );
+  const targetDecisionCount = state.decisions.filter((d) => targetAppealIds.has(d.appealId)).length;
+  return {
+    conversations: targetConvIds.size,
+    evaluations: targetEvalIds.size,
+    appeals: targetAppealIds.size,
+    decisions: targetDecisionCount,
+    conversationsCount: targetConvIds.size,
+    evaluationsCount: targetEvalIds.size,
+    appealsCount: targetAppealIds.size,
+    decisionsCount: targetDecisionCount,
+  };
+}
+
+let isSyncingStorage = false;
+let storeApi: {
+  getState: () => { storageError: boolean };
+  setState: (patch: Partial<CqaState>) => void;
+} | null = null;
+
+export function setStorageErrorState(error: boolean) {
+  const api = storeApi ?? (typeof useCqa !== "undefined" ? useCqa : null);
+  if (!api) return;
+  if (api.getState().storageError === error) return;
+  isSyncingStorage = true;
+  try {
+    api.setState({ storageError: error });
+  } finally {
+    isSyncingStorage = false;
+  }
+}
+
+export function createSafeStorage<S = unknown>(
+  getStorage: () => Storage | StateStorage,
+  options?: {
+    onError?: (error: unknown) => void;
+    onSuccess?: () => void;
+  },
+): PersistStorage<S> {
+  const jsonStorage = createJSONStorage<S>(getStorage as () => StateStorage);
+  return {
+    getItem: (name: string) => {
+      try {
+        return jsonStorage?.getItem(name) ?? null;
+      } catch {
+        return null;
+      }
+    },
+    removeItem: (name: string) => {
+      try {
+        return jsonStorage?.removeItem(name);
+      } catch {
+        // ignore removal error
+      }
+    },
+    setItem: (name: string, value: any) => {
+      if (isSyncingStorage) return;
+      try {
+        const res = jsonStorage?.setItem(name, value);
+        if (res instanceof Promise) {
+          return res
+            .then(() => {
+              if (options?.onSuccess) {
+                options.onSuccess();
+              } else {
+                setStorageErrorState(false);
+              }
+            })
+            .catch((err) => {
+              if (options?.onError) {
+                options.onError(err);
+              } else {
+                setStorageErrorState(true);
+              }
+            }) as any;
+        }
+        if (options?.onSuccess) {
+          options.onSuccess();
+        } else {
+          setStorageErrorState(false);
+        }
+      } catch (err) {
+        if (options?.onError) {
+          options.onError(err);
+        } else {
+          setStorageErrorState(true);
+        }
+      }
+    },
+  };
 }
 
 function memoryStorage(): Storage {
@@ -105,6 +231,7 @@ function fresh(): CqaData {
     jobs: [],
     role: "analyst",
     importNote: "Демонстрационный режим: 14 учебных диалогов. Это не официальные 65 DEV.",
+    storageError: false,
   };
 }
 
@@ -442,11 +569,71 @@ export const useCqa = create<CqaState>()(
         return null;
       },
       resetLocal: () => set({ ...fresh(), conversations: buildDemo(), importNote: "Данные сброшены. Загружен демонстрационный набор, не официальный DEV." }),
+      clearStorageError: () => {
+        isSyncingStorage = true;
+        try {
+          set({ storageError: false });
+        } finally {
+          isSyncingStorage = false;
+        }
+      },
+      deleteDatasetGroup: (groupId: string): DeleteDatasetGroupResult => {
+        const state = get();
+        const targetConvIds = new Set(
+          state.conversations.filter((c) => c.datasetGroupId === groupId).map((c) => c.id),
+        );
+        if (targetConvIds.size === 0) {
+          return {
+            conversations: 0,
+            evaluations: 0,
+            appeals: 0,
+            decisions: 0,
+            conversationsCount: 0,
+            evaluationsCount: 0,
+            appealsCount: 0,
+            decisionsCount: 0,
+          };
+        }
+        const targetEvalIds = new Set(
+          state.evaluations.filter((e) => targetConvIds.has(e.conversationId)).map((e) => e.id),
+        );
+        const targetAppealIds = new Set(
+          state.appeals.filter((a) => targetEvalIds.has(a.evaluationId)).map((a) => a.id),
+        );
+        const targetDecisionIds = new Set(
+          state.decisions.filter((d) => targetAppealIds.has(d.appealId)).map((d) => d.id),
+        );
+
+        const result: DeleteDatasetGroupResult = {
+          conversations: targetConvIds.size,
+          evaluations: targetEvalIds.size,
+          appeals: targetAppealIds.size,
+          decisions: targetDecisionIds.size,
+          conversationsCount: targetConvIds.size,
+          evaluationsCount: targetEvalIds.size,
+          appealsCount: targetAppealIds.size,
+          decisionsCount: targetDecisionIds.size,
+        };
+
+        set((current) => ({
+          conversations: current.conversations.filter((c) => !targetConvIds.has(c.id)),
+          evaluations: current.evaluations.filter((e) => !targetEvalIds.has(e.id)),
+          appeals: current.appeals.filter((a) => !targetAppealIds.has(a.id)),
+          decisions: current.decisions.filter((d) => !targetDecisionIds.has(d.id)),
+          jobs: current.jobs.map((j) => ({
+            ...j,
+            items: j.items.filter((item) => !targetConvIds.has(item.conversationId)),
+            errors: j.errors.filter((err) => !targetConvIds.has(err.conversationId)),
+          })),
+        }));
+
+        return result;
+      },
     }),
     {
       name: "cqa-freedom-v1",
       skipHydration: true,
-      storage: createJSONStorage(() => (typeof window === "undefined" ? memoryStorage() : localStorage)),
+      storage: createSafeStorage(() => (typeof window === "undefined" ? memoryStorage() : localStorage)),
       partialize: (state) => ({
         versions: state.versions,
         activeVersionId: state.activeVersionId,
@@ -535,6 +722,8 @@ export const useCqa = create<CqaState>()(
     },
   ),
 );
+
+storeApi = useCqa;
 
 export interface BatchTargetQuery {
   conversationIds: string[];

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AudioLines, Play, Upload } from "lucide-react";
+import { AlertTriangle, AudioLines, Play, Trash2, Upload } from "lucide-react";
 import { parseImport } from "@/lib/cqa/engine";
 import { evaluateConversation, getLlmInfo, importOrganizerGroup, type LlmInfo } from "@/lib/cqa/ai-fns";
 import { createBatchRunner, mapCancelledItem } from "@/lib/cqa/queue";
-import { filterConversations, latestEvaluation, selectBatchTargets, useCqa } from "@/lib/cqa/store";
+import { filterConversations, getDatasetGroupStats, latestEvaluation, selectBatchTargets, useCqa } from "@/lib/cqa/store";
 import { resultRows, resultsToCsv } from "@/lib/cqa/benchmark";
 import { controlConversations } from "@/lib/cqa/control";
 import type { BatchItemStatus } from "@/lib/cqa/types";
@@ -34,10 +34,14 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
   const importControl = useCqa((state) => state.importControl);
   const startJob = useCqa((state) => state.startJob);
   const patchJob = useCqa((state) => state.patchJob);
+  const storageError = useCqa((state) => state.storageError);
+  const clearStorageError = useCqa((state) => state.clearStorageError);
+  const deleteDatasetGroup = useCqa((state) => state.deleteDatasetGroup);
   const version = versions.find((item) => item.id === activeVersionId);
   const [language, setLanguage] = useState("all");
   const [channel, setChannel] = useState("all");
   const [selectedGroup, setSelectedGroup] = useState("all");
+  const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<string | null>(null);
   const [groupId, setGroupId] = useState("DEV");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -414,13 +418,16 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
         {error ? <p className="mt-2 text-sm text-critical">{error}</p> : null}
       </section>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <button
           className={cx(
             "h-10 rounded-full px-3 text-sm font-semibold",
             selectedGroup === "all" ? "bg-ink text-on-ink" : "bg-surface text-muted border border-line",
           )}
-          onClick={() => setSelectedGroup("all")}
+          onClick={() => {
+            setSelectedGroup("all");
+            setConfirmDeleteGroup(null);
+          }}
         >
           Все наборы
         </button>
@@ -431,12 +438,57 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
               "h-10 rounded-full px-3 text-sm font-semibold",
               selectedGroup === item.groupId ? "bg-ink text-on-ink" : "bg-surface text-muted border border-line",
             )}
-            onClick={() => setSelectedGroup(item.groupId)}
+            onClick={() => {
+              setSelectedGroup(item.groupId);
+              setConfirmDeleteGroup(null);
+            }}
           >
             {item.groupId} · {item.count}
           </button>
         ))}
+        {selectedGroup !== "all" ? (
+          <Button
+            variant="danger"
+            className="h-10 px-3 text-xs"
+            onClick={() => setConfirmDeleteGroup(selectedGroup)}
+          >
+            <Trash2 className="size-3.5" />
+            Удалить набор {selectedGroup}
+          </Button>
+        ) : null}
       </div>
+
+      {confirmDeleteGroup ? (() => {
+        const stats = getDatasetGroupStats(useCqa.getState(), confirmDeleteGroup);
+        return (
+          <div className="rounded-2xl border border-critical bg-critical-soft p-4 text-sm text-ink">
+            <p className="font-semibold text-critical">
+              Подтвердите удаление набора «{confirmDeleteGroup}»
+            </p>
+            <p className="mt-1 text-sm text-ink">
+              Будет удалено: {stats.conversations} диалогов, {stats.evaluations} оценок, {stats.appeals} апелляций{stats.decisions > 0 ? `, ${stats.decisions} решений` : ""}.
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              Действие необратимо. Оценки и апелляции этого набора будут полностью удалены.
+            </p>
+            <div className="mt-3 flex gap-2">
+              <Button
+                variant="danger"
+                onClick={() => {
+                  deleteDatasetGroup(confirmDeleteGroup);
+                  setSelectedGroup("all");
+                  setConfirmDeleteGroup(null);
+                }}
+              >
+                Да, удалить набор
+              </Button>
+              <Button variant="ghost" onClick={() => setConfirmDeleteGroup(null)}>
+                Отмена
+              </Button>
+            </div>
+          </div>
+        );
+      })() : null}
 
       <div className="flex flex-wrap gap-2">
         {["all", "RU", "KZ", "EN"].map((item) => (
@@ -566,6 +618,28 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
           {job.mode === "ai" ? `, расход $${spent.toFixed(4)}` : ""}
           {job.errors[0] ? ` — ${job.errors[0].message}` : ""}
         </p>
+      ) : null}
+
+      {storageError ? (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="flex items-center justify-between gap-3 rounded-2xl border border-critical bg-critical-soft p-4 text-sm text-critical"
+        >
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="size-5 shrink-0" />
+            <span>
+              Хранилище браузера переполнено — последние изменения не сохранены. Сделайте «Экспорт JSON» и удалите старые наборы.
+            </span>
+          </div>
+          <button
+            type="button"
+            className="shrink-0 text-xs font-semibold underline hover:no-underline"
+            onClick={clearStorageError}
+          >
+            Закрыть
+          </button>
+        </div>
       ) : null}
 
       <div className="flex flex-wrap gap-2">
