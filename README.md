@@ -185,15 +185,11 @@ npm run estimate:cost
 
 Команды верификации качества проекта:
 ```bash
-npm run test:cqa      # Запуск тестов CQA
+npm test              # Запуск всех автоматических тестов
 npm run typecheck     # Проверка типов TypeScript (tsc --noEmit)
 npm run lint          # Линтер ESLint
 npm run build         # Продакшн-сборка Vite / TanStack Start
 ```
-
-> **Важное предупреждение о `npm test`**:
-> Базовая команда `npm test` в шаблоне окружения запускает тесты шаблона `scripts/brand-check/*.test.mjs`, которые требуют каталог `.grok/`. При его отсутствии тесты шаблона падают (8 failure). К логике и коду CQA это не имеет отношения.
-> Для проверки CQA запускайте: **`npm run test:cqa`** (все тесты проходят успешно: pass, 0 fail).
 
 ---
 
