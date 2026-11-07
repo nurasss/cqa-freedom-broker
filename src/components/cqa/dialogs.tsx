@@ -649,7 +649,10 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
         >
           Экспорт JSON
         </Button>
-        <Button variant="ghost" onClick={() => downloadText("cqa-results.csv", resultsToCsv(resultRows(rows, evaluations)), "text/csv")}>
+        <Button
+          variant="ghost"
+          onClick={() => downloadText("cqa-results.csv", resultsToCsv(resultRows(rows, evaluations)), "text/csv;charset=utf-8")}
+        >
           Экспорт CSV
         </Button>
       </div>

@@ -142,7 +142,16 @@ export function benchmarkByRun(criteria: Criterion[], pairs: BenchmarkPair[]): R
   return Object.fromEntries([...groups.entries()].map(([key, group]) => [key, evaluateBenchmark(criteria, group)]));
 }
 
+export interface CriterionDetail {
+  answer: Answer;
+  reason: string;
+  evidence: { messageIndex: number; quote: string; speaker?: string; timestampRaw?: string }[];
+  checkedRange: { from: number; to: number } | null;
+  naReason: string | null;
+}
+
 export interface ResultRow {
+  // 17 core columns
   conversationId: string;
   externalId: string;
   language: string;
@@ -161,44 +170,104 @@ export interface ResultRow {
   estimatedCostUsd: number;
   calls: number;
   answers: Record<string, string>;
+
+  // Additional fields for organizers & compatibility aliases
+  configHash: string;
+  conversation_id: string;
+  dataset_group_id: string;
+  prompt_version: string;
+  c08_flag: boolean;
+  criteria: Record<string, CriterionDetail>;
+  details: Record<string, CriterionDetail>;
+}
+
+export function formatEvidenceQuotes(
+  evidence?: { messageIndex: number; quote: string; speaker?: string; timestampRaw?: string }[] | null,
+): string {
+  if (!evidence || evidence.length === 0) return "";
+  return evidence
+    .map((e) => `[#${e.messageIndex}${e.speaker ? ` ${e.speaker}` : ""}] ${e.quote}`)
+    .join("; ");
+}
+
+export function formatCheckedRange(range?: { from: number; to: number } | null): string {
+  if (!range || typeof range.from !== "number" || typeof range.to !== "number") return "";
+  return `${range.from}-${range.to}`;
+}
+
+export const UTF8_BOM = "\uFEFF";
+
+export function csvCell(value: string | number | boolean | null | undefined): string {
+  const text = value === null || value === undefined ? "" : String(value);
+  return /[",;\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
 export function resultRows(conversations: Conversation[], evaluations: Evaluation[]): ResultRow[] {
   const byId = new Map(conversations.map((item) => [item.id, item]));
-  return [...evaluations]
+  const targetEvals = conversations.length > 0
+    ? evaluations.filter((item) => byId.has(item.conversationId))
+    : evaluations;
+
+  return [...targetEvals]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .map((evaluation) => {
       const conversation = byId.get(evaluation.conversationId);
+      const results = evaluation.finalResults && evaluation.finalResults.length > 0
+        ? evaluation.finalResults
+        : evaluation.baseResults;
+
+      const criteria: Record<string, CriterionDetail> = {};
+      for (const res of results) {
+        criteria[res.criterionId] = {
+          answer: res.answer,
+          reason: res.reason ?? "",
+          evidence: res.evidence ?? [],
+          checkedRange: res.checkedRange ?? null,
+          naReason: res.naReason ?? null,
+        };
+      }
+
+      const groupId = conversation?.datasetGroupId ?? "";
       return {
         conversationId: evaluation.conversationId,
+        conversation_id: evaluation.conversationId,
         externalId: conversation?.externalId ?? "",
         language: conversation?.language ?? "",
         channel: conversation?.channel ?? "",
-        groupId: conversation?.datasetGroupId ?? "",
+        groupId,
+        dataset_group_id: groupId,
         source: evaluation.source,
         model: evaluation.model,
         promptVersion: evaluation.promptVersion,
+        prompt_version: evaluation.promptVersion,
         checklistVersionId: evaluation.checklistVersionId,
+        configHash: evaluation.configHash ?? "",
         status: evaluation.status,
         baseTotal: evaluation.baseTotal,
         finalTotal: evaluation.finalTotal,
         critical: evaluation.finalCritical,
+        c08_flag: evaluation.finalCritical,
         promptTokens: evaluation.usage?.promptTokens ?? 0,
         completionTokens: evaluation.usage?.completionTokens ?? 0,
         estimatedCostUsd: evaluation.usage?.estimatedCostUsd ?? 0,
         calls: evaluation.usage?.calls ?? 0,
-        answers: Object.fromEntries(evaluation.baseResults.map((result) => [result.criterionId, String(result.answer)])),
+        answers: Object.fromEntries(results.map((result) => [result.criterionId, String(result.answer)])),
+        criteria,
+        details: criteria,
       };
     });
 }
 
-function csvCell(value: string | number | boolean | null): string {
-  const text = value === null || value === undefined ? "" : String(value);
-  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
-}
-
 export function resultsToCsv(rows: ResultRow[]): string {
-  const ids = [...new Set(rows.flatMap((row) => Object.keys(row.answers)))].sort();
+  const ids = [
+    ...new Set(
+      rows.flatMap((row) => [
+        ...Object.keys(row.answers),
+        ...Object.keys(row.criteria ?? {}),
+      ]),
+    ),
+  ].sort();
+
   const header = [
     "conversationId",
     "externalId",
@@ -218,7 +287,15 @@ export function resultsToCsv(rows: ResultRow[]): string {
     "estimatedCostUsd",
     "calls",
     ...ids,
+    "configHash",
+    ...ids.flatMap((id) => [
+      `${id}_reason`,
+      `${id}_evidence`,
+      `${id}_checked_range`,
+      `${id}_na_reason`,
+    ]),
   ];
+
   const lines = rows.map((row) =>
     [
       row.conversationId,
@@ -239,9 +316,20 @@ export function resultsToCsv(rows: ResultRow[]): string {
       row.estimatedCostUsd,
       row.calls,
       ...ids.map((id) => row.answers[id] ?? ""),
+      row.configHash,
+      ...ids.flatMap((id) => {
+        const crit = row.criteria?.[id] ?? row.details?.[id];
+        return [
+          crit?.reason ?? "",
+          formatEvidenceQuotes(crit?.evidence),
+          formatCheckedRange(crit?.checkedRange),
+          crit?.naReason ?? "",
+        ];
+      }),
     ]
       .map(csvCell)
       .join(","),
   );
-  return [header.join(","), ...lines].join("\n");
+
+  return UTF8_BOM + [header.join(","), ...lines].join("\n");
 }
