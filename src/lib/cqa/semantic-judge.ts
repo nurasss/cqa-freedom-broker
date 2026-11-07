@@ -225,7 +225,18 @@ export function applySemanticVerdicts(assembled: Assembled, verdicts: SemanticVe
     review = true;
     errors.push(`${result.criterionId}: ${verdict.explanation}`);
     if (verdict.status === "invalid") {
-      return { ...result, validationStatus: "invalid_evidence" as const, critical: false };
+      return {
+        ...result,
+        validationStatus: "invalid_evidence" as const,
+        critical: false,
+        judgeNote: verdict.explanation,
+      };
+    }
+    if (verdict.status === "needs_review") {
+      return {
+        ...result,
+        judgeNote: verdict.explanation,
+      };
     }
     return result;
   });

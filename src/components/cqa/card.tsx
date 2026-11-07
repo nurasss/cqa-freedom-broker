@@ -8,7 +8,7 @@ import { allowedAnswers, computeScore, formatAnswer } from "@/lib/cqa/score";
 import { latestEvaluation, useCqa } from "@/lib/cqa/store";
 import type { Answer, Criterion, Evaluation } from "@/lib/cqa/types";
 import { MODEL_ID, PROMPT_VERSION, SECTION_LABEL } from "@/lib/cqa/types";
-import { Button, channelLabel, cx, formatTotal, inputClass, sourceLabel } from "./ui";
+import { Button, channelLabel, cx, evalStatusLabel, evalStatusTooltip, formatTotal, inputClass, sourceLabel } from "./ui";
 
 export function CardView({ conversationId, onBack }: { conversationId: string; onBack: () => void }) {
   const conversation = useCqa((state) => state.conversations.find((item) => item.id === conversationId));
@@ -76,7 +76,7 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
     document.getElementById(`msg-${conversationId}-${target}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
-  async function onGrok() {
+  async function onEvaluateAi() {
     setBusy(true);
     setError("");
     const targetModel = llmInfo?.model ?? MODEL_ID;
@@ -154,8 +154,22 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
             <p className="text-xs tracking-wide uppercase opacity-70">Итог после апелляций</p>
             <p className="mt-1 font-mono text-4xl font-medium">{formatTotal(evaluation?.finalTotal)}</p>
           </div>
-          <div className="text-right text-sm">
-            <p>{evaluation ? `${sourceLabel(evaluation.source)} · ${evaluation.status}` : "нет оценки"}</p>
+          <div className="shrink-0 text-right text-sm">
+            <p>
+              {evaluation ? (
+                <>
+                  {sourceLabel(evaluation.source)} ·{" "}
+                  <span
+                    title={evalStatusTooltip(evaluation.status)}
+                    className={evalStatusTooltip(evaluation.status) ? "cursor-help underline decoration-dotted underline-offset-2" : ""}
+                  >
+                    {evalStatusLabel(evaluation.status)}
+                  </span>
+                </>
+              ) : (
+                "нет оценки"
+              )}
+            </p>
             <p className="opacity-70">применимый вес {outcome?.denominator ?? "—"}</p>
           </div>
         </div>
@@ -188,7 +202,7 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button disabled={busy} onClick={() => void onGrok()}>
+        <Button disabled={busy} onClick={() => void onEvaluateAi()}>
           {busy ? "Считаю…" : "Оценить AI"}
         </Button>
         {llmInfo ? (
@@ -209,24 +223,46 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
       </div>
       {error ? <p className="text-sm text-critical">{error}</p> : null}
       {evaluation?.source === "ai" ? (
-        <p className="text-xs leading-5 text-muted">
-          AI Evaluation: {evaluation.trace.find((line) => line.startsWith("evaluation:"))?.replace("evaluation: ", "") ?? evaluation.status}. AI Judge:{" "}
-          {evaluation.trace.some((line) => line.startsWith("judge error"))
-            ? "ошибка"
-            : evaluation.trace.some((line) => line.startsWith("judge ") && !line.startsWith("judge: пропущен"))
-              ? "выполнен"
-              : evaluation.trace.some((line) => line.includes("пропущен"))
-                ? "пропущен"
-                : "нет данных"}
-          . Итог карточки: {evaluation.status}. Ответы модели не переписываются.
-        </p>
-      ) : null}
-      {evaluation?.usage ? (
-        <p className="text-xs leading-5 text-muted">
-          {evaluation.model}, вызовов {evaluation.usage.calls}, токены {evaluation.usage.promptTokens} /{" "}
-          {evaluation.usage.completionTokens}. Ориентир стоимости ${evaluation.usage.estimatedCostUsd.toFixed(4)} по
-          публичному тарифу $2 / $6 за 1М токенов.
-        </p>
+        <div className="flex flex-col gap-1 text-xs leading-5 text-muted">
+          <p>
+            AI Evaluation:{" "}
+            <span
+              title={evalStatusTooltip(evaluation.trace.find((line) => line.startsWith("evaluation:"))?.replace("evaluation: ", "") ?? evaluation.status)}
+              className="cursor-help"
+            >
+              {evalStatusLabel(evaluation.trace.find((line) => line.startsWith("evaluation:"))?.replace("evaluation: ", "") ?? evaluation.status)}
+            </span>
+            . AI Judge:{" "}
+            {evaluation.trace.some((line) => line.startsWith("judge error"))
+              ? "ошибка"
+              : evaluation.trace.some((line) => line.startsWith("judge ") && !line.startsWith("judge: пропущен"))
+                ? "выполнен"
+                : evaluation.trace.some((line) => line.includes("пропущен"))
+                  ? "пропущен"
+                  : "нет данных"}
+            . Итог карточки:{" "}
+            <span
+              title={evalStatusTooltip(evaluation.status)}
+              className={evalStatusTooltip(evaluation.status) ? "cursor-help underline decoration-dotted underline-offset-2" : ""}
+            >
+              {evalStatusLabel(evaluation.status)}
+            </span>
+            . Ответы модели не переписываются.
+          </p>
+          <p>
+            Модель: <span className="font-mono text-ink">{evaluation.model}</span> · Промпт:{" "}
+            <span className="font-mono text-ink">{evaluation.promptVersion}</span> · Чек-лист:{" "}
+            <span className="font-mono text-ink">{evaluation.checklistVersionId}</span> · Вызовов:{" "}
+            <span className="font-mono text-ink">{evaluation.usage?.calls ?? 0}</span> · Стоимость:{" "}
+            <span className="font-mono text-ink">${(evaluation.usage?.estimatedCostUsd ?? 0).toFixed(4)}</span>
+            {evaluation.usage ? (
+              <span>
+                {" "}
+                (токены {evaluation.usage.promptTokens} / {evaluation.usage.completionTokens})
+              </span>
+            ) : null}
+          </p>
+        </div>
       ) : null}
 
       {manual ? (
@@ -382,14 +418,18 @@ function CriterionCard({
           </p>
           <h3 className="text-base font-semibold text-ink">{criterion.title}</h3>
         </div>
-        <p className="font-mono text-xl text-ink">{result ? formatAnswer(result.answer) : "—"}</p>
+        <p className="shrink-0 font-mono text-xl text-ink">{result ? formatAnswer(result.answer) : "—"}</p>
       </div>
       {result ? (
         <>
           <p className="mt-2 text-sm leading-6 text-ink">{result.reason}</p>
           <p className="mt-1 text-xs text-muted">
             вклад {result.contribution === null ? "вне суммы" : result.contribution.toFixed(2)}
-            {result.validationStatus !== "ok" ? ` · ${result.validationStatus}` : ""}
+            {result.validationStatus === "invalid_evidence"
+              ? " · цитаты не подтверждены"
+              : result.validationStatus !== "ok"
+                ? ` · ${result.validationStatus}`
+                : ""}
             {base && base.answer !== result.answer ? ` · исходная оценка ${formatAnswer(base.answer)}` : ""}
           </p>
           {result.naReason ? <p className="mt-2 text-sm text-muted">N/A: {result.naReason}</p> : null}
@@ -412,6 +452,24 @@ function CriterionCard({
               </button>
             ) : null}
           </div>
+          {result.validationStatus === "invalid_evidence" ? (() => {
+            const issueReason =
+              result.judgeNote
+                ? `Замечание судьи: ${result.judgeNote}`
+                : result.evidenceError
+                  ? `Ошибка проверки: ${result.evidenceError}`
+                  : evaluation?.trace.find((l) => l.startsWith(`${criterion.id}:`))
+                    ? `Ошибка проверки: ${evaluation.trace.find((l) => l.startsWith(`${criterion.id}:`))}`
+                    : evaluation?.trace.find((l) => l.includes(`judge ${criterion.id}:`))
+                      ? `Замечание судьи: ${evaluation.trace.find((l) => l.includes(`judge ${criterion.id}:`))}`
+                      : "Цитаты или интервал не подтверждены при проверке транскрипта";
+            return (
+              <div className="mt-2 rounded-xl border border-critical/30 bg-critical-soft p-3 text-xs text-critical">
+                <p className="font-semibold">Проверка цитат / замечание судьи:</p>
+                <p className="mt-1 leading-5">{issueReason}</p>
+              </div>
+            );
+          })() : null}
         </>
       ) : (
         <p className="mt-2 text-sm text-muted">Критерий ещё не оценён.</p>

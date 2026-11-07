@@ -62,3 +62,5 @@ export function sourceLabel(source: string): string {
   if (source === "demo") return "демо";
   return "вручную";
 }
+
+export { evalStatusLabel, evalStatusTooltip } from "@/lib/cqa/types";

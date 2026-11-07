@@ -94,17 +94,21 @@ export function assemble(
     const judged = judgeEvidence(criterion, draft.answer, draft.quotes, draft.checkedRange, messages);
     if (judged.invalid) evidenceBad = true;
     errors.push(...judged.errors);
+    const critErrors: string[] = [...judged.errors];
     if (draft.reason.trim().length < 4) {
       evidenceBad = true;
       errors.push(`${criterion.id}: нет объяснения`);
+      critErrors.push(`${criterion.id}: нет объяснения`);
     }
     if (draft.unbound) {
       evidenceBad = true;
       errors.push(`${criterion.id}: формулировка изменена, старая семантика идентификатора не применяется`);
+      critErrors.push(`${criterion.id}: формулировка изменена, старая семантика идентификатора не применяется`);
     }
     if (draft.answer === "na" && !(draft.naReason && draft.naReason.trim().length >= 4)) {
       evidenceBad = true;
       errors.push(`${criterion.id}: N/A без причины`);
+      critErrors.push(`${criterion.id}: N/A без причины`);
     }
     answers[criterion.id] = draft.answer;
     const weight = criterion.weight;
@@ -117,6 +121,7 @@ export function assemble(
       checkedRange: judged.checkedRange,
       naReason: draft.answer === "na" ? draft.naReason : null,
       validationStatus: needsProof || draft.unbound ? "invalid_evidence" : "ok",
+      evidenceError: (needsProof || draft.unbound) && critErrors.length ? critErrors.join("; ") : undefined,
       weight,
       normalized: null,
       contribution: null,

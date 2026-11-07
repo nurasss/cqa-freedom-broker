@@ -8,7 +8,7 @@ import { resultRows, resultsToCsv } from "@/lib/cqa/benchmark";
 import { controlConversations } from "@/lib/cqa/control";
 import type { BatchItemStatus } from "@/lib/cqa/types";
 import { MODEL_ID, PROMPT_VERSION } from "@/lib/cqa/types";
-import { Button, channelLabel, cx, formatTotal, inputClass, sourceLabel } from "./ui";
+import { Button, channelLabel, cx, evalStatusLabel, evalStatusTooltip, formatTotal, inputClass, sourceLabel } from "./ui";
 
 export const DEFAULT_COST_ESTIMATE_USD = 0.05;
 
@@ -45,7 +45,7 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
   const [groupId, setGroupId] = useState("DEV");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [confirmGrok, setConfirmGrok] = useState(false);
+  const [confirmAi, setConfirmAi] = useState(false);
   const [concurrency, setConcurrency] = useState(2);
   const [modelId, setModelId] = useState(MODEL_ID);
   const [llmInfo, setLlmInfo] = useState<LlmInfo | null>(null);
@@ -219,7 +219,7 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
     cancelRef.current = false;
     const jobId = startJob(mode, targets.length);
     setBusy(true);
-    setConfirmGrok(false);
+    setConfirmAi(false);
     let spentNow = 0;
     setSpent(0);
     try {
@@ -358,7 +358,7 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
       <section className="rounded-2xl border border-line bg-surface p-4">
         <p className="text-xs font-semibold tracking-wide text-accent uppercase">Сценарий защиты</p>
         <p className="mt-2 text-sm leading-6 text-ink">
-          Откройте диалог и запустите Grok или эвристику. Клик по цитате подсвечивает реплику. У звонка есть плеер.
+          Откройте диалог и запустите AI или эвристику. Клик по цитате подсвечивает реплику. У звонка есть плеер.
           Оспорьте критерий, переключитесь на «Проверяющий» и измените балл — итог пересчитается без нового вызова модели.
           В чек-листе сохраните новую версию и оцените другой диалог.
         </p>
@@ -522,7 +522,7 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
           <Play className="size-4" />
           Эвристика по списку
         </Button>
-        <Button variant="primary" disabled={busy || !rows.length} onClick={() => setConfirmGrok(true)}>
+        <Button variant="primary" disabled={busy || !rows.length} onClick={() => setConfirmAi(true)}>
           AI по списку
         </Button>
         <Button variant="ghost" disabled={busy} onClick={() => void runBatch("ai", true)}>
@@ -540,7 +540,7 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
             onChange={(event) => setConcurrency(Math.max(1, Math.min(4, Number(event.target.value) || 1)))}
           />
         </label>
-        <label className="flex items-center gap-2 text-sm text-muted">
+        <label className="flex flex-wrap items-center gap-2 text-sm text-muted">
           Модель
           <input
             className="h-11 w-36 rounded-xl border border-line px-2 text-ink"
@@ -597,7 +597,7 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
           </Button>
         ) : null}
       </div>
-      {confirmGrok ? (
+      {confirmAi ? (
         <div className="rounded-2xl border border-line bg-accent-soft p-4 text-sm text-ink">
           Пакет оценит {candidateTargets.length} диалогов фильтра, у которых ещё нет AI-оценки с моделью {modelId || MODEL_ID}, промптом {PROMPT_VERSION} и текущей версией чек-листа.{" "}
           {aiEvaluationsWithCost.length > 0
@@ -606,7 +606,7 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
           Параллельность {concurrency}, лимит расходов ${costCap}. Повтор сети — до трёх попыток. Демо и эвристика не записываются как AI.
           <div className="mt-3 flex gap-2">
             <Button onClick={() => void runBatch("ai")}>Запустить</Button>
-            <Button variant="ghost" onClick={() => setConfirmGrok(false)}>
+            <Button variant="ghost" onClick={() => setConfirmAi(false)}>
               Отмена
             </Button>
           </div>
@@ -675,12 +675,25 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
                   </span>
                 </span>
                 {conversation.channel === "voice call" ? <AudioLines className="size-4 text-accent" /> : null}
-                <span className="text-right">
+                <span className="shrink-0 text-right">
                   <span className="block font-mono text-lg font-medium text-ink">
                     {formatTotal(evaluation?.finalTotal)}
                   </span>
                   <span className="text-xs text-muted">
-                    {evaluation ? `${sourceLabel(evaluation.source)} · ${evaluation.finalCritical ? "крит. флаг" : evaluation.status}` : "не оценён"}
+                    {evaluation ? (
+                      <>
+                        {sourceLabel(evaluation.source)} ·{" "}
+                        {evaluation.finalCritical ? "крит. флаг · " : ""}
+                        <span
+                          title={evalStatusTooltip(evaluation.status)}
+                          className={evalStatusTooltip(evaluation.status) ? "cursor-help underline decoration-dotted underline-offset-2" : ""}
+                        >
+                          {evalStatusLabel(evaluation.status)}
+                        </span>
+                      </>
+                    ) : (
+                      "не оценён"
+                    )}
                   </span>
                 </span>
               </button>

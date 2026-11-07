@@ -235,7 +235,7 @@ function fresh(): CqaData {
   };
 }
 
-function materialize(
+export function materialize(
   evaluation: Evaluation,
   version: ChecklistVersion,
   appeals: Appeal[],
@@ -273,6 +273,8 @@ function materialize(
       weight: line?.weight ?? result.weight,
       naReason: answer === "na" ? (reasonOverride.get(result.criterionId) ?? result.naReason) : null,
       validationStatus: result.validationStatus,
+      evidenceError: result.evidenceError,
+      judgeNote: result.judgeNote,
     };
   });
   return {

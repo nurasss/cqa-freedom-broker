@@ -61,6 +61,8 @@ export interface CriterionResult {
   contribution: number | null;
   isNa: boolean;
   critical: boolean;
+  evidenceError?: string;
+  judgeNote?: string;
 }
 
 export interface UsageInfo {
@@ -75,6 +77,38 @@ export interface UsageInfo {
 export type EvalSource = "ai" | "heuristic" | "manual" | "demo";
 
 export type EvalStatus = "completed" | "needs_review" | "failed" | "not_scorable";
+
+export function evalStatusLabel(status: string | null | undefined): string {
+  if (!status) return "—";
+  switch (status) {
+    case "completed":
+      return "принято";
+    case "needs_review":
+      return "на проверке";
+    case "failed":
+      return "ошибка";
+    case "not_scorable":
+      return "не рассчитывается";
+    default:
+      return status;
+  }
+}
+
+export function evalStatusTooltip(status: string | null | undefined): string | undefined {
+  if (!status) return undefined;
+  switch (status) {
+    case "completed":
+      return "принято";
+    case "needs_review":
+      return "на проверке: судья или проверка цитат не подтвердили часть ответов";
+    case "failed":
+      return "ошибка";
+    case "not_scorable":
+      return "не рассчитывается";
+    default:
+      return undefined;
+  }
+}
 
 export interface Evaluation {
   id: string;

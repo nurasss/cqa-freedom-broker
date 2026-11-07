@@ -8,7 +8,7 @@ import { useCqa } from "@/lib/cqa/store";
 import type { AnswerType, Criterion, SectionId } from "@/lib/cqa/types";
 import { SECTION_LABEL } from "@/lib/cqa/types";
 import type { BenchmarkReport } from "@/lib/cqa/benchmark";
-import { Button, cx, inputClass } from "./ui";
+import { Button, cx, evalStatusTooltip, inputClass } from "./ui";
 
 const sections = Object.keys(SECTION_LABEL) as SectionId[];
 const types: AnswerType[] = ["yes_no", "yes_no_na", "scale", "flag"];
@@ -347,7 +347,7 @@ export function ChecklistView() {
         {report ? (
           <div className="mt-3 text-ink">
             <p>MAE итога: {report.mae ?? "—"} · N/A precision {report.naPrecision ?? "—"} · N/A recall {report.naRecall ?? "—"}</p>
-            <p>needs_review: {report.needsReview}</p>
+            <p title={evalStatusTooltip("needs_review")}>На проверке (needs_review): {report.needsReview}</p>
             <ul className="mt-2">
               {Object.entries(report.criterionAccuracy).map(([id, value]) => (
                 <li key={id}>
