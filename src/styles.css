@@ -1,0 +1,41 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #f3f6f4;
+  --color-surface: #ffffff;
+  --color-ink: #122018;
+  --color-on-ink: #f3f6f4;
+  --color-muted: #5c6b63;
+  --color-line: #d5e0da;
+  --color-accent: #157a45;
+  --color-accent-soft: #e5f5ec;
+  --color-on-accent: #f4fff8;
+  --color-critical: #b42318;
+  --color-critical-soft: #fdeceb;
+  --font-sans: "Manrope", "Noto Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+  }
+  body {
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto !important;
+  }
+}
