@@ -193,7 +193,11 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
         </Button>
         {llmInfo ? (
           <span className="text-xs text-muted">
-            {llmInfo.isLocal ? `локальная: ${llmInfo.provider}` : llmInfo.provider}
+            {llmInfo.isLocal
+              ? `локальная: ${llmInfo.provider}`
+              : llmInfo.priceSource === "env" && llmInfo.priceInputPerM === 0 && llmInfo.priceOutputPerM === 0
+                ? `${llmInfo.provider} (бесплатно)`
+                : llmInfo.provider}
           </span>
         ) : null}
         <Button variant="ghost" disabled={busy} onClick={() => evaluateRules(dialog.id)}>

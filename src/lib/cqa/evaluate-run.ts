@@ -42,6 +42,8 @@ export interface EvaluationDeps {
   sleep?: (ms: number) => Promise<void>;
   env?: Record<string, string | undefined>;
   isLocal?: boolean;
+  priceInputPerM?: number;
+  priceOutputPerM?: number;
 }
 
 export interface EvalInput {
@@ -68,9 +70,15 @@ export type EvalResponse =
   | EvalOutput
   | { ok: false; error: string; code?: EvalErrorCode; usage?: UsageInfo };
 
-export function estimateCost(promptTokens: number, completionTokens: number, isLocal = false): number {
+export function estimateCost(
+  promptTokens: number,
+  completionTokens: number,
+  isLocal = false,
+  priceInputPerM = INPUT_USD_PER_M,
+  priceOutputPerM = OUTPUT_USD_PER_M,
+): number {
   if (isLocal) return 0;
-  const usd = (promptTokens / 1_000_000) * INPUT_USD_PER_M + (completionTokens / 1_000_000) * OUTPUT_USD_PER_M;
+  const usd = (promptTokens / 1_000_000) * priceInputPerM + (completionTokens / 1_000_000) * priceOutputPerM;
   return Math.round(usd * 10_000) / 10_000;
 }
 
@@ -204,6 +212,10 @@ export async function runEvaluation(input: EvalInput, deps: EvaluationDeps): Pro
   const judgeMaxTokens = parseTokenLimit(env?.LLM_JUDGE_MAX_TOKENS || env?.XAI_JUDGE_MAX_TOKENS, 3000);
 
   const isLocal = Boolean(deps.isLocal);
+
+  const priceInputPerM = deps.priceInputPerM ?? INPUT_USD_PER_M;
+  const priceOutputPerM = deps.priceOutputPerM ?? OUTPUT_USD_PER_M;
+
   const tracker: CallTracker = {
     promptTokens: 0,
     completionTokens: 0,
@@ -214,7 +226,13 @@ export async function runEvaluation(input: EvalInput, deps: EvaluationDeps): Pro
   const getUsage = (): UsageInfo => ({
     promptTokens: tracker.promptTokens,
     completionTokens: tracker.completionTokens,
-    estimatedCostUsd: estimateCost(tracker.promptTokens, tracker.completionTokens, isLocal),
+    estimatedCostUsd: estimateCost(
+      tracker.promptTokens,
+      tracker.completionTokens,
+      isLocal,
+      priceInputPerM,
+      priceOutputPerM,
+    ),
     calls: tracker.calls,
   });
 

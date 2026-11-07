@@ -210,7 +210,14 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
         maxAttempts: 3,
         retryDelayMs: mode === "ai" ? 600 : 0,
         costCap: mode === "ai" ? costCap : undefined,
-        estimateCostUsd: mode === "ai" ? (avgCostPerDialog > 0 ? avgCostPerDialog : DEFAULT_COST_ESTIMATE_USD) : 0,
+        estimateCostUsd:
+          mode === "ai"
+            ? avgCostPerDialog > 0
+              ? avgCostPerDialog
+              : llmInfo?.isLocal || (llmInfo?.priceSource === "env" && llmInfo.priceInputPerM === 0 && llmInfo.priceOutputPerM === 0)
+                ? 0
+                : DEFAULT_COST_ESTIMATE_USD
+            : 0,
         isCancelled: () => cancelRef.current,
         onUpdate: (items) => {
           const resolvedItems = items.map((item) => (cancelRef.current ? mapCancelledItem(item) : item));
@@ -438,7 +445,11 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
           />
           {llmInfo ? (
             <span className="text-xs text-muted">
-              {llmInfo.isLocal ? `локальная: ${llmInfo.provider}` : llmInfo.provider}
+              {llmInfo.isLocal
+                ? `локальная: ${llmInfo.provider}`
+                : llmInfo.priceSource === "env" && llmInfo.priceInputPerM === 0 && llmInfo.priceOutputPerM === 0
+                  ? `${llmInfo.provider} (бесплатно)`
+                  : llmInfo.provider}
             </span>
           ) : null}
         </label>

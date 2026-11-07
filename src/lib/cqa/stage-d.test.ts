@@ -379,3 +379,148 @@ test("Stage D: isLocal results in estimatedCostUsd = 0 with non-zero tokens", as
     assert.ok(cloudRes.usage.estimatedCostUsd > 0);
   }
 });
+
+test("Stage D: LLM_PRICE_*=0 results in estimatedCostUsd = 0 with non-zero tokens", async () => {
+  const mockSuccessComplete: CompleteFn = async () => ({
+    ok: true,
+    content: JSON.stringify({
+      criteria: [{ id: "C01", answer: "yes", quote: "Здравствуйте! Чем могу помочь?", comment: "Ок" }],
+    }),
+    promptTokens: 1500,
+    completionTokens: 800,
+  });
+
+  const cfg = resolveLlmConfig({
+    LLM_PRICE_INPUT_PER_M: "0",
+    LLM_PRICE_OUTPUT_PER_M: "0",
+  });
+  assert.equal(cfg.priceSource, "env");
+  assert.equal(cfg.priceInputPerM, 0);
+  assert.equal(cfg.priceOutputPerM, 0);
+
+  const res = await runEvaluation(
+    { conversation: dummyConversation, criteria: dummyCriteria },
+    {
+      complete: mockSuccessComplete,
+      isLocal: false,
+      priceInputPerM: cfg.priceInputPerM,
+      priceOutputPerM: cfg.priceOutputPerM,
+    },
+  );
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    assert.ok(res.usage.promptTokens > 0);
+    assert.ok(res.usage.completionTokens > 0);
+    assert.equal(res.usage.estimatedCostUsd, 0);
+  }
+});
+
+test("Stage D: specified LLM_PRICE_* values are applied in cost calculation", async () => {
+  const mockSuccessComplete: CompleteFn = async () => ({
+    ok: true,
+    content: JSON.stringify({
+      criteria: [{ id: "C01", answer: "yes", quote: "Здравствуйте! Чем могу помочь?", comment: "Ок" }],
+    }),
+    promptTokens: 1_000_000,
+    completionTokens: 1_000_000,
+  });
+
+  const cfg = resolveLlmConfig({
+    LLM_PRICE_INPUT_PER_M: "10",
+    LLM_PRICE_OUTPUT_PER_M: "30",
+  });
+  assert.equal(cfg.priceSource, "env");
+  assert.equal(cfg.priceInputPerM, 10);
+  assert.equal(cfg.priceOutputPerM, 30);
+
+  const res = await runEvaluation(
+    { conversation: dummyConversation, criteria: dummyCriteria },
+    {
+      complete: mockSuccessComplete,
+      isLocal: false,
+      priceInputPerM: cfg.priceInputPerM,
+      priceOutputPerM: cfg.priceOutputPerM,
+    },
+  );
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    const expected = (res.usage.promptTokens / 1_000_000) * 10 + (res.usage.completionTokens / 1_000_000) * 30;
+    assert.equal(res.usage.estimatedCostUsd, Math.round(expected * 10_000) / 10_000);
+  }
+});
+
+test("Stage D: garbage LLM_PRICE_* values fall back to default types.ts prices", async () => {
+  const cfg = resolveLlmConfig({
+    LLM_PRICE_INPUT_PER_M: "not-a-number",
+    LLM_PRICE_OUTPUT_PER_M: "-10",
+  });
+  assert.equal(cfg.priceSource, "default");
+  assert.equal(cfg.priceInputPerM, 2);
+  assert.equal(cfg.priceOutputPerM, 6);
+
+  const mockSuccessComplete: CompleteFn = async () => ({
+    ok: true,
+    content: JSON.stringify({
+      criteria: [{ id: "C01", answer: "yes", quote: "Здравствуйте! Чем могу помочь?", comment: "Ок" }],
+    }),
+    promptTokens: 1000,
+    completionTokens: 500,
+  });
+
+  const res = await runEvaluation(
+    { conversation: dummyConversation, criteria: dummyCriteria },
+    {
+      complete: mockSuccessComplete,
+      isLocal: false,
+      priceInputPerM: cfg.priceInputPerM,
+      priceOutputPerM: cfg.priceOutputPerM,
+    },
+  );
+  assert.equal(res.ok, true);
+  if (res.ok) {
+    const expected = (res.usage.promptTokens / 1_000_000) * 2 + (res.usage.completionTokens / 1_000_000) * 6;
+    assert.equal(res.usage.estimatedCostUsd, Math.round(expected * 10_000) / 10_000);
+  }
+
+  // Also verify that omitting price deps falls back to default prices
+  const resDefault = await runEvaluation(
+    { conversation: dummyConversation, criteria: dummyCriteria },
+    {
+      complete: mockSuccessComplete,
+      isLocal: false,
+    },
+  );
+  assert.equal(resDefault.ok, true);
+  if (resDefault.ok) {
+    const expected = (resDefault.usage.promptTokens / 1_000_000) * 2 + (resDefault.usage.completionTokens / 1_000_000) * 6;
+    assert.equal(resDefault.usage.estimatedCostUsd, Math.round(expected * 10_000) / 10_000);
+  }
+});
+
+test("Stage D: priceSource is correctly reported for env, default and local", () => {
+  // Case 1: default (no price env vars, not local)
+  const defaultCfg = resolveLlmConfig({});
+  assert.equal(defaultCfg.priceSource, "default");
+  assert.equal(defaultCfg.priceInputPerM, 2);
+  assert.equal(defaultCfg.priceOutputPerM, 6);
+
+  // Case 2: env (prices specified in env)
+  const envCfg1 = resolveLlmConfig({ LLM_PRICE_INPUT_PER_M: "0", LLM_PRICE_OUTPUT_PER_M: "0" });
+  assert.equal(envCfg1.priceSource, "env");
+  assert.equal(envCfg1.priceInputPerM, 0);
+  assert.equal(envCfg1.priceOutputPerM, 0);
+
+  const envCfg2 = resolveLlmConfig({ LLM_PRICE_INPUT_PER_M: "5.5" });
+  assert.equal(envCfg2.priceSource, "env");
+  assert.equal(envCfg2.priceInputPerM, 5.5);
+  assert.equal(envCfg2.priceOutputPerM, 6); // default output price kept
+
+  // Case 3: local (localhost / 127.0.0.1 overrides env prices to local and 0)
+  const localCfg = resolveLlmConfig({
+    LLM_BASE_URL: "http://localhost:11434/v1",
+    LLM_PRICE_INPUT_PER_M: "100",
+  });
+  assert.equal(localCfg.priceSource, "local");
+  assert.equal(localCfg.priceInputPerM, 0);
+  assert.equal(localCfg.priceOutputPerM, 0);
+});

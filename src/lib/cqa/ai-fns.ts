@@ -7,7 +7,7 @@ import {
   type EvalOutput,
   type EvalResponse,
 } from "./evaluate-run.ts";
-import { MODEL_ID } from "./types.ts";
+import { INPUT_USD_PER_M, MODEL_ID, OUTPUT_USD_PER_M } from "./types.ts";
 
 export type { CompleteResult, EvalErrorCode, EvalInput, EvalOutput, EvalResponse };
 
@@ -17,6 +17,9 @@ export interface LlmConfig {
   model: string;
   isLocal: boolean;
   timeoutMs: number;
+  priceInputPerM: number;
+  priceOutputPerM: number;
+  priceSource: "env" | "default" | "local";
 }
 
 export interface LlmInfo {
@@ -24,6 +27,18 @@ export interface LlmInfo {
   provider: string;
   isLocal: boolean;
   hasKey: boolean;
+  priceSource: "env" | "default" | "local";
+  priceInputPerM?: number;
+  priceOutputPerM?: number;
+}
+
+export function parsePrice(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed === "") return undefined;
+  const num = Number(trimmed);
+  if (!Number.isFinite(num) || num < 0) return undefined;
+  return num;
 }
 
 export function resolveTimeoutMs(env: Record<string, string | undefined>, isLocal: boolean): number {
@@ -71,12 +86,37 @@ export function resolveLlmConfig(env: Record<string, string | undefined> = proce
   const model = /^[A-Za-z0-9._:/-]{1,128}$/.test(rawModel) ? rawModel : MODEL_ID;
   const timeoutMs = resolveTimeoutMs(env, isLocal);
 
+  const parsedInputPrice = parsePrice(env.LLM_PRICE_INPUT_PER_M);
+  const parsedOutputPrice = parsePrice(env.LLM_PRICE_OUTPUT_PER_M);
+  const hasEnvPrice = parsedInputPrice !== undefined || parsedOutputPrice !== undefined;
+
+  let priceSource: "env" | "default" | "local";
+  let priceInputPerM: number;
+  let priceOutputPerM: number;
+
+  if (isLocal) {
+    priceSource = "local";
+    priceInputPerM = 0;
+    priceOutputPerM = 0;
+  } else if (hasEnvPrice) {
+    priceSource = "env";
+    priceInputPerM = parsedInputPrice !== undefined ? parsedInputPrice : INPUT_USD_PER_M;
+    priceOutputPerM = parsedOutputPrice !== undefined ? parsedOutputPrice : OUTPUT_USD_PER_M;
+  } else {
+    priceSource = "default";
+    priceInputPerM = INPUT_USD_PER_M;
+    priceOutputPerM = OUTPUT_USD_PER_M;
+  }
+
   return {
     baseUrl,
     apiKey,
     model,
     isLocal,
     timeoutMs,
+    priceInputPerM,
+    priceOutputPerM,
+    priceSource,
   };
 }
 
@@ -218,6 +258,9 @@ export const getLlmInfo = createServerFn({ method: "GET" })
         provider,
         isLocal: config.isLocal,
         hasKey: Boolean(config.apiKey),
+        priceSource: config.priceSource,
+        priceInputPerM: config.priceInputPerM,
+        priceOutputPerM: config.priceOutputPerM,
       };
     } catch {
       return {
@@ -225,6 +268,9 @@ export const getLlmInfo = createServerFn({ method: "GET" })
         provider: "api.x.ai",
         isLocal: false,
         hasKey: false,
+        priceSource: "default",
+        priceInputPerM: INPUT_USD_PER_M,
+        priceOutputPerM: OUTPUT_USD_PER_M,
       };
     }
   });
@@ -268,6 +314,8 @@ export const evaluateConversation = createServerFn({ method: "POST" })
           fetchComplete(config.apiKey, config.baseUrl, mdl, maxTokens, messages, config.timeoutMs),
         env: process.env,
         isLocal: config.isLocal,
+        priceInputPerM: config.priceInputPerM,
+        priceOutputPerM: config.priceOutputPerM,
       },
     );
   });
