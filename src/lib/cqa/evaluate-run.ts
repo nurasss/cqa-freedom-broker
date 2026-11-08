@@ -541,6 +541,7 @@ export async function runEvaluation(input: EvalInput, deps: EvaluationDeps): Pro
               { role: "user", content: judgePrompt(rejudgeCases, input.conversation.messages) },
             ]);
 
+            const returnedRejudgeCriterionIds = new Set<string>();
             if (rejudgeResult.ok) {
               try {
                 const parsedRejudge = parseJudgeResponse(
@@ -549,6 +550,7 @@ export async function runEvaluation(input: EvalInput, deps: EvaluationDeps): Pro
                 );
                 for (const verdict of parsedRejudge.verdicts) {
                   verdictsMap.set(verdict.criterionId, verdict);
+                  returnedRejudgeCriterionIds.add(verdict.criterionId);
                   tracker.trace.push(`rejudge ${verdict.criterionId}: ${verdict.status}`);
                 }
               } catch {
@@ -558,6 +560,16 @@ export async function runEvaluation(input: EvalInput, deps: EvaluationDeps): Pro
             } else {
               tracker.trace.push(`judge error: ${rejudgeResult.error}`);
               judgeError = `AI Judge не выполнен: ${rejudgeResult.error}. Ответ модели не заменён.`;
+            }
+
+            for (const c of replacedCriteria) {
+              if (!returnedRejudgeCriterionIds.has(c.id)) {
+                verdictsMap.set(c.id, {
+                  criterionId: c.id,
+                  status: "needs_review",
+                  explanation: "Повторная проверка AI Judge не выполнена",
+                });
+              }
             }
           }
 

@@ -232,7 +232,8 @@ npm run estimate:cost
 
 Команды верификации качества проекта:
 ```bash
-npm test              # Запуск всех автоматических тестов (192 теста без сбоев)
+npm test              # Запуск всех автоматических тестов (209 тестов без сбоев)
+npm run test:cqa      # Запуск тестов CQA-логики и эталонов (150 тестов)
 npm run typecheck     # Проверка типов TypeScript (tsc --noEmit)
 npm run lint          # Линтер ESLint
 npm run build         # Продакшн-сборка Vite / TanStack Start

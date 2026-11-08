@@ -180,10 +180,19 @@ export async function runQueue<T>(options: QueueOptions<T>): Promise<QueueOutcom
         snapshot.message = reason instanceof Error ? reason.message : "ошибка";
         publish();
         if (isFatal || snapshot.attempts >= maxAttempts) return;
-        if (options.retryDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, options.retryDelayMs));
+
         if (costCap !== undefined) {
+          if (spent + reserved + estimate > costCap) {
+            stoppedByBudget = true;
+            snapshot.status = "failed";
+            snapshot.message = "Повтор не выполнен: достигнут лимит расходов";
+            publish();
+            return;
+          }
           reserved += estimate;
         }
+
+        if (options.retryDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, options.retryDelayMs));
       }
     }
   }
@@ -245,8 +254,7 @@ export async function runQueue<T>(options: QueueOptions<T>): Promise<QueueOutcom
           ? "failed"
           : "completed";
 
-  const hasPendingFromBudget = items.some((item) => item.status === "pending") && stoppedByBudget;
-  const outcomeStoppedByBudget = !options.isCancelled?.() && hasPendingFromBudget;
+  const outcomeStoppedByBudget = !options.isCancelled?.() && stoppedByBudget;
 
   return {
     status,

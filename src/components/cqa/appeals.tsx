@@ -2,7 +2,7 @@ import { useCqa } from "@/lib/cqa/store";
 import { formatAnswer } from "@/lib/cqa/score";
 import { Button, formatTotal } from "./ui";
 
-export function AppealsView({ onOpen }: { onOpen: (conversationId: string) => void }) {
+export function AppealsView({ onOpen }: { onOpen: (conversationId: string, evaluationId?: string) => void }) {
   const appeals = useCqa((state) => state.appeals);
   const decisions = useCqa((state) => state.decisions);
   const evaluations = useCqa((state) => state.evaluations);
@@ -40,7 +40,7 @@ export function AppealsView({ onOpen }: { onOpen: (conversationId: string) => vo
                 </p>
               ) : null}
               {conversation ? (
-                <Button className="mt-3" variant="ghost" onClick={() => onOpen(conversation.id)}>
+                <Button className="mt-3" variant="ghost" onClick={() => onOpen(conversation.id, appeal.evaluationId)}>
                   Открыть карточку
                 </Button>
               ) : null}

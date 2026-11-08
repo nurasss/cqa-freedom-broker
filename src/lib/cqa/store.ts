@@ -543,24 +543,83 @@ export const useCqa = create<CqaState>()(
         });
       },
       importSnapshot: (raw) => {
-        let parsed: Partial<CqaData>;
+        let parsed: unknown;
         try {
-          parsed = JSON.parse(raw) as Partial<CqaData>;
+          parsed = JSON.parse(raw);
         } catch {
           return "Файл архива не JSON";
         }
-        if (!parsed || typeof parsed !== "object") return "Пустой архив";
-        set((state) => {
-          const versions = mergeById(state.versions, parsed.versions ?? []);
-          const conversations = mergeById(state.conversations, parsed.conversations ?? []);
-          const evaluations = mergeById(state.evaluations, (parsed.evaluations ?? []).map(normalizeEvaluation));
-          const appeals = mergeById(state.appeals, parsed.appeals ?? []);
-          const decisions = mergeById(state.decisions, parsed.decisions ?? []);
-          const activeVersionId = versions.some((item) => item.id === state.activeVersionId)
-            ? state.activeVersionId
-            : (versions[0]?.id ?? state.activeVersionId);
-          return { versions, conversations, evaluations, appeals, decisions, activeVersionId };
-        });
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return "Пустой архив";
+        const obj = parsed as Record<string, unknown>;
+
+        const collections = ["versions", "conversations", "evaluations", "appeals", "decisions"] as const;
+        for (const col of collections) {
+          if (col in obj && obj[col] !== undefined && !Array.isArray(obj[col])) {
+            return `Архив повреждён: поле ${col} не массив`;
+          }
+        }
+
+        let skippedCount = 0;
+        let importedCount = 0;
+
+        const filterItems = <T extends { id: string }>(
+          rawList: unknown,
+          validator?: (item: Record<string, unknown>) => boolean,
+        ): T[] => {
+          if (!Array.isArray(rawList)) return [];
+          const valid: T[] = [];
+          for (const item of rawList) {
+            if (!item || typeof item !== "object" || Array.isArray(item)) {
+              skippedCount++;
+              continue;
+            }
+            const rec = item as Record<string, unknown>;
+            if (typeof rec.id !== "string" || !rec.id.trim()) {
+              skippedCount++;
+              continue;
+            }
+            if (validator && !validator(rec)) {
+              skippedCount++;
+              continue;
+            }
+            valid.push(item as T);
+            importedCount++;
+          }
+          return valid;
+        };
+
+        const versionsList = filterItems<ChecklistVersion>(obj.versions);
+        const conversationsList = filterItems<Conversation>(obj.conversations, (rec) => Array.isArray(rec.messages));
+        const evaluationsList = filterItems<Evaluation>(
+          obj.evaluations,
+          (rec) =>
+            typeof rec.conversationId === "string" &&
+            rec.conversationId.trim().length > 0 &&
+            typeof rec.checklistVersionId === "string" &&
+            rec.checklistVersionId.trim().length > 0,
+        );
+        const appealsList = filterItems<Appeal>(obj.appeals);
+        const decisionsList = filterItems<ReviewDecision>(obj.decisions);
+
+        try {
+          set((state) => {
+            const versions = mergeById(state.versions, versionsList);
+            const conversations = mergeById(state.conversations, conversationsList);
+            const evaluations = mergeById(state.evaluations, evaluationsList.map(normalizeEvaluation));
+            const appeals = mergeById(state.appeals, appealsList);
+            const decisions = mergeById(state.decisions, decisionsList);
+            const activeVersionId = versions.some((item) => item.id === state.activeVersionId)
+              ? state.activeVersionId
+              : (versions[0]?.id ?? state.activeVersionId);
+            return { versions, conversations, evaluations, appeals, decisions, activeVersionId };
+          });
+        } catch (err) {
+          return err instanceof Error ? err.message : "Ошибка при сохранении архива";
+        }
+
+        if (skippedCount > 0) {
+          return `Импортировано ${importedCount}, пропущено ${skippedCount} повреждённых записей`;
+        }
         return null;
       },
       resetLocal: () => set({ ...fresh(), conversations: buildDemo(), importNote: "Данные сброшены. Загружен демонстрационный набор, не официальный DEV." }),
@@ -752,6 +811,21 @@ export function latestEvaluation(
   return evaluations
     .filter((item) => item.conversationId === conversationId && (!versionId || item.checklistVersionId === versionId))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+}
+
+export function resolveCardEvaluation(
+  evaluations: Evaluation[],
+  conversationId: string,
+  activeVersionId: string,
+  evaluationId?: string | null,
+): Evaluation | undefined {
+  if (evaluationId) {
+    const target = evaluations.find(
+      (e) => e.id === evaluationId && e.conversationId === conversationId,
+    );
+    if (target) return target;
+  }
+  return latestEvaluation(evaluations, conversationId, activeVersionId);
 }
 
 export interface ConversationFilterOptions {

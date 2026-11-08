@@ -19,6 +19,7 @@ const roles: { id: Role; label: string }[] = [
 export function Shell() {
   const [view, setView] = useState<View>("dialogs");
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [evaluationId, setEvaluationId] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const role = useCqa((state) => state.role);
   const setRole = useCqa((state) => state.setRole);
@@ -39,8 +40,9 @@ export function Shell() {
     };
   }, [importDemo]);
 
-  function open(id: string) {
+  function open(id: string, evalId?: string) {
     setConversationId(id);
+    setEvaluationId(evalId ?? null);
     setView("card");
   }
 
@@ -119,7 +121,14 @@ export function Shell() {
           {!ready ? (
             <p className="text-sm text-muted">Открываю рабочее место и демо-диалоги…</p>
           ) : view === "card" && conversationId ? (
-            <CardView conversationId={conversationId} onBack={() => setView("dialogs")} />
+            <CardView
+              conversationId={conversationId}
+              evaluationId={evaluationId ?? undefined}
+              onBack={() => {
+                setView("dialogs");
+                setEvaluationId(null);
+              }}
+            />
           ) : view === "appeals" ? (
             <AppealsView onOpen={open} />
           ) : view === "checklist" ? (

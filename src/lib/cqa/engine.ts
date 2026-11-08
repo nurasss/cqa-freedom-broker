@@ -229,10 +229,21 @@ export function parseImport(
   const conversations: Conversation[] = [];
   const skipped: string[] = [];
   const seen = new Set<string>();
+  let corruptedCount = 0;
   records.forEach((record, index) => {
-    const externalId = String(record.conversation_id ?? "").trim();
-    const transcript = record.transcript;
-    if (!externalId || !Array.isArray(transcript) || transcript.length === 0) {
+    if (!record || typeof record !== "object" || Array.isArray(record)) {
+      corruptedCount++;
+      return;
+    }
+    const rec = record as Record<string, unknown>;
+    const rawId = rec.conversation_id;
+    const externalId = typeof rawId === "string" || typeof rawId === "number" ? String(rawId).trim() : "";
+    const transcript = rec.transcript;
+    if (!externalId || !Array.isArray(transcript)) {
+      corruptedCount++;
+      return;
+    }
+    if (transcript.length === 0) {
       skipped.push(`запись ${index + 1}`);
       return;
     }
@@ -255,18 +266,20 @@ export function parseImport(
       id: `${groupId}::${externalId}`,
       datasetGroupId: groupId,
       externalId,
-      channel: String(record.channel ?? "agent chat"),
-      language: String(record.language ?? "RU"),
-      audioUrl: record.audio_url ?? null,
+      channel: String(rec.channel ?? "agent chat"),
+      language: String(rec.language ?? "RU"),
+      audioUrl: typeof rec.audio_url === "string" ? rec.audio_url : null,
       origin,
       messages,
     });
   });
 
   if (!conversations.length) {
-    return { conversations: [], groupId, channels: { chat: 0, call: 0 }, error: "Все записи повреждены" };
+    const msg = corruptedCount > 0 ? `Все записи повреждены: пропущено ${corruptedCount} повреждённых записей` : "Все записи повреждены";
+    return { conversations: [], groupId, channels: { chat: 0, call: 0 }, error: msg };
   }
   const notes: string[] = [];
+  if (corruptedCount > 0) notes.push(`пропущено ${corruptedCount} повреждённых записей`);
   if (skipped.length) notes.push(`Пропущены: ${skipped.join(", ")}`);
   if (expected !== undefined && expected !== conversations.length) {
     notes.push(`total_records=${expected}, разобрано ${conversations.length}`);

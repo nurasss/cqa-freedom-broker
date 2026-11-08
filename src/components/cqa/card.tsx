@@ -5,14 +5,23 @@ import type { DraftAnswer } from "@/lib/cqa/engine";
 import { safeAudioUrl } from "@/lib/cqa/engine";
 import { mediaOffset } from "@/lib/cqa/media";
 import { allowedAnswers, computeScore, formatAnswer } from "@/lib/cqa/score";
-import { latestEvaluation, useCqa } from "@/lib/cqa/store";
+import { resolveCardEvaluation, useCqa } from "@/lib/cqa/store";
 import type { Answer, Criterion, Evaluation } from "@/lib/cqa/types";
 import { MODEL_ID, PROMPT_VERSION, SECTION_LABEL } from "@/lib/cqa/types";
 import { Button, channelLabel, cx, evalStatusLabel, evalStatusTooltip, formatTotal, inputClass, sourceLabel } from "./ui";
 
-export function CardView({ conversationId, onBack }: { conversationId: string; onBack: () => void }) {
+export function CardView({
+  conversationId,
+  evaluationId,
+  onBack,
+}: {
+  conversationId: string;
+  evaluationId?: string;
+  onBack: () => void;
+}) {
   const conversation = useCqa((state) => state.conversations.find((item) => item.id === conversationId));
   const version = useCqa((state) => state.versions.find((item) => item.id === state.activeVersionId));
+  const versions = useCqa((state) => state.versions);
   const evaluations = useCqa((state) => state.evaluations);
   const appeals = useCqa((state) => state.appeals);
   const decisions = useCqa((state) => state.decisions);
@@ -23,6 +32,7 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
   const submitAppeal = useCqa((state) => state.submitAppeal);
   const decideAppeal = useCqa((state) => state.decideAppeal);
   const isBatchRunning = useCqa((state) => state.jobs.some((j) => j.status === "running"));
+  const [selectedEvaluationId, setSelectedEvaluationId] = useState<string | null>(evaluationId ?? null);
   const [highlight, setHighlight] = useState<number | null>(null);
   const [range, setRange] = useState<{ from: number; to: number } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -34,17 +44,32 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useEffect(() => {
+    setSelectedEvaluationId(evaluationId ?? null);
+  }, [evaluationId]);
+
+  useEffect(() => {
     getLlmInfo()
       .then((info) => setLlmInfo(info))
       .catch(() => {});
   }, []);
 
-  const evaluation = conversation && version ? latestEvaluation(evaluations, conversation.id, version.id) : undefined;
+  const evaluation = conversation && version
+    ? resolveCardEvaluation(evaluations, conversation.id, version.id, selectedEvaluationId)
+    : undefined;
+
+  const isViewingDisputed = Boolean(
+    selectedEvaluationId && evaluation && evaluation.id === selectedEvaluationId,
+  );
+
+  const targetChecklist = isViewingDisputed && evaluation
+    ? versions.find((v) => v.id === evaluation.checklistVersionId) ?? version
+    : version;
+
   const outcome = useMemo(() => {
-    if (!version || !evaluation) return null;
+    if (!targetChecklist || !evaluation) return null;
     const answers = Object.fromEntries(evaluation.finalResults.map((item) => [item.criterionId, item.answer]));
-    return computeScore(version.criteria, answers);
-  }, [version, evaluation]);
+    return computeScore(targetChecklist.criteria, answers);
+  }, [targetChecklist, evaluation]);
 
   if (!conversation || !version) {
     return (
@@ -59,7 +84,9 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
   }
 
   const dialog = conversation;
-  const checklist = version;
+  const checklist = (isViewingDisputed && evaluation
+    ? versions.find((v) => v.id === evaluation.checklistVersionId)
+    : null) ?? version;
   const audio = safeAudioUrl(dialog.audioUrl);
 
   function focusEvidence(index: number | null, checked: { from: number; to: number } | null) {
@@ -148,6 +175,25 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
           </p>
         </div>
       </div>
+
+      {isViewingDisputed && evaluation ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-accent bg-accent-soft p-4 text-sm text-ink">
+          <span>
+            Показана оспоренная оценка от{" "}
+            {new Date(evaluation.createdAt).toLocaleDateString("ru-RU", {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+            , версия чек-листа {evaluation.checklistVersionId}
+          </span>
+          <Button variant="ghost" onClick={() => setSelectedEvaluationId(null)}>
+            Показать актуальную оценку
+          </Button>
+        </div>
+      ) : null}
 
       <section className="rounded-2xl bg-ink p-4 text-on-ink">
         <div className="flex items-end justify-between gap-3">
