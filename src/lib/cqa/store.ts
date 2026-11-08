@@ -48,10 +48,6 @@ export interface DatasetGroupStats {
   evaluations: number;
   appeals: number;
   decisions: number;
-  conversationsCount: number;
-  evaluationsCount: number;
-  appealsCount: number;
-  decisionsCount: number;
 }
 
 export interface DeleteDatasetGroupResult {
@@ -59,10 +55,6 @@ export interface DeleteDatasetGroupResult {
   evaluations: number;
   appeals: number;
   decisions: number;
-  conversationsCount: number;
-  evaluationsCount: number;
-  appealsCount: number;
-  decisionsCount: number;
 }
 
 export interface CqaData {
@@ -120,10 +112,6 @@ export function getDatasetGroupStats(state: CqaData, groupId: string): DatasetGr
     evaluations: targetEvalIds.size,
     appeals: targetAppealIds.size,
     decisions: targetDecisionCount,
-    conversationsCount: targetConvIds.size,
-    evaluationsCount: targetEvalIds.size,
-    appealsCount: targetAppealIds.size,
-    decisionsCount: targetDecisionCount,
   };
 }
 
@@ -590,10 +578,6 @@ export const useCqa = create<CqaState>()(
             evaluations: 0,
             appeals: 0,
             decisions: 0,
-            conversationsCount: 0,
-            evaluationsCount: 0,
-            appealsCount: 0,
-            decisionsCount: 0,
           };
         }
         const targetEvalIds = new Set(
@@ -611,10 +595,6 @@ export const useCqa = create<CqaState>()(
           evaluations: targetEvalIds.size,
           appeals: targetAppealIds.size,
           decisions: targetDecisionIds.size,
-          conversationsCount: targetConvIds.size,
-          evaluationsCount: targetEvalIds.size,
-          appealsCount: targetAppealIds.size,
-          decisionsCount: targetDecisionIds.size,
         };
 
         set((current) => ({

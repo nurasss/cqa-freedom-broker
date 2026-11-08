@@ -267,7 +267,6 @@ test("Stage I.2: getDatasetGroupStats and deleteDatasetGroup cascade deletion", 
   assert.equal(statsAlpha.evaluations, 2);
   assert.equal(statsAlpha.appeals, 1);
   assert.equal(statsAlpha.decisions, 1);
-  assert.equal(statsAlpha.conversationsCount, 2);
 
   const statsBeta = getDatasetGroupStats(stateBefore, "BETA");
   assert.equal(statsBeta.conversations, 1);
@@ -282,10 +281,6 @@ test("Stage I.2: getDatasetGroupStats and deleteDatasetGroup cascade deletion", 
     evaluations: 2,
     appeals: 1,
     decisions: 1,
-    conversationsCount: 2,
-    evaluationsCount: 2,
-    appealsCount: 1,
-    decisionsCount: 1,
   });
 
   const stateAfter = useCqa.getState();
@@ -323,10 +318,6 @@ test("Stage I.2: deleteDatasetGroup on non-existent group is a safe no-op", () =
     evaluations: 0,
     appeals: 0,
     decisions: 0,
-    conversationsCount: 0,
-    evaluationsCount: 0,
-    appealsCount: 0,
-    decisionsCount: 0,
   });
 
   const stateAfter = useCqa.getState();

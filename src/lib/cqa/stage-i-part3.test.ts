@@ -364,30 +364,25 @@ test("Stage I.3: JSON export via resultRows contains all required organizer fiel
   assert.equal(rows.length, 1);
   const row = rows[0];
 
-  // Core metadata and aliases
+  // Core metadata
   assert.equal(row.conversationId, "c-json-1");
-  assert.equal(row.conversation_id, "c-json-1");
   assert.equal(row.groupId, "DEV_DATASET");
-  assert.equal(row.dataset_group_id, "DEV_DATASET");
   assert.equal(row.channel, "email");
   assert.equal(row.language, "EN");
   assert.equal(row.checklistVersionId, "official-chat-v1");
   assert.equal(row.configHash, "hash-json-v1");
   assert.equal(row.model, "grok-4.7");
   assert.equal(row.promptVersion, "cqa-s5-v5");
-  assert.equal(row.prompt_version, "cqa-s5-v5");
   assert.equal(row.source, "ai");
   assert.equal(row.status, "completed");
   assert.equal(row.baseTotal, 85);
   assert.equal(row.finalTotal, 85);
   assert.equal(row.critical, false);
-  assert.equal(row.c08_flag, false);
   assert.equal(row.estimatedCostUsd, 0.0075);
   assert.equal(row.calls, 2);
 
   // Per-criterion detailed breakdown
   assert.ok(row.criteria, "Must contain criteria map");
-  assert.ok(row.details, "Must contain details map alias");
 
   const c01 = row.criteria.C01;
   assert.equal(c01.answer, "yes");
@@ -406,8 +401,8 @@ test("Stage I.3: JSON export via resultRows contains all required organizer fiel
   // JSON serialization test (JSON.stringify works cleanly without circular structures)
   const jsonString = JSON.stringify(rows, null, 2);
   const parsed = JSON.parse(jsonString);
-  assert.equal(parsed[0].conversation_id, "c-json-1");
-  assert.equal(parsed[0].dataset_group_id, "DEV_DATASET");
+  assert.equal(parsed[0].conversationId, "c-json-1");
+  assert.equal(parsed[0].groupId, "DEV_DATASET");
   assert.equal(parsed[0].criteria.C01.answer, "yes");
 });
 
@@ -472,4 +467,48 @@ test("Stage I.3: Appeal override updates answers and criteria while retaining ba
     csv.includes("Апелляция удовлетворена: приветствие присутствует в реплике #1."),
     "Updated reason in CSV",
   );
+});
+
+test("Stage J: resultRows latestOnly exports 1 newest row per conversation; latestOnly false exports all", () => {
+  const conv = createMockConversation("c-multi-run", "DEV", "ext-multi");
+
+  const evalOld = createMockEvaluation("e-old", "c-multi-run", {
+    model: "old-model-run",
+    status: "completed",
+  });
+  evalOld.createdAt = "2026-11-08T01:00:00Z";
+  evalOld.baseTotal = 50;
+  evalOld.finalTotal = 50;
+
+  const evalNew = createMockEvaluation("e-new", "c-multi-run", {
+    model: "new-model-run",
+    status: "completed",
+  });
+  evalNew.createdAt = "2026-11-08T02:00:00Z";
+  evalNew.baseTotal = 95;
+  evalNew.finalTotal = 95;
+
+  // 1. By default (latestOnly: true) -> exactly 1 row with new model
+  const defaultRows = resultRows([conv], [evalOld, evalNew]);
+  assert.equal(defaultRows.length, 1);
+  assert.equal(defaultRows[0].model, "new-model-run");
+  assert.equal(defaultRows[0].finalTotal, 95);
+
+  const defaultCsv = resultsToCsv(defaultRows);
+  const defaultCsvLines = defaultCsv.trim().split("\n");
+  // Header line + 1 data line = 2 lines
+  assert.equal(defaultCsvLines.length, 2);
+  assert.ok(defaultCsv.includes("new-model-run"));
+  assert.ok(!defaultCsv.includes("old-model-run"));
+
+  // 2. With latestOnly: false -> 2 rows (both evaluations)
+  const allRows = resultRows([conv], [evalOld, evalNew], { latestOnly: false });
+  assert.equal(allRows.length, 2);
+
+  const allCsv = resultsToCsv(allRows);
+  const allCsvLines = allCsv.trim().split("\n");
+  // Header line + 2 data lines = 3 lines
+  assert.equal(allCsvLines.length, 3);
+  assert.ok(allCsv.includes("new-model-run"));
+  assert.ok(allCsv.includes("old-model-run"));
 });

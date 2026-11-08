@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, AudioLines, Play, Trash2, Upload } from "lucide-react";
+import { AudioLines, Play, Trash2, Upload } from "lucide-react";
 import { parseImport } from "@/lib/cqa/engine";
 import { evaluateConversation, getLlmInfo, importOrganizerGroup, type LlmInfo } from "@/lib/cqa/ai-fns";
 import { createBatchRunner, mapCancelledItem } from "@/lib/cqa/queue";
@@ -34,8 +34,6 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
   const importControl = useCqa((state) => state.importControl);
   const startJob = useCqa((state) => state.startJob);
   const patchJob = useCqa((state) => state.patchJob);
-  const storageError = useCqa((state) => state.storageError);
-  const clearStorageError = useCqa((state) => state.clearStorageError);
   const deleteDatasetGroup = useCqa((state) => state.deleteDatasetGroup);
   const version = versions.find((item) => item.id === activeVersionId);
   const [language, setLanguage] = useState("all");
@@ -620,38 +618,16 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
         </p>
       ) : null}
 
-      {storageError ? (
-        <div
-          role="alert"
-          aria-live="assertive"
-          className="flex items-center justify-between gap-3 rounded-2xl border border-critical bg-critical-soft p-4 text-sm text-critical"
-        >
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="size-5 shrink-0" />
-            <span>
-              Хранилище браузера переполнено — последние изменения не сохранены. Сделайте «Экспорт JSON» и удалите старые наборы.
-            </span>
-          </div>
-          <button
-            type="button"
-            className="shrink-0 text-xs font-semibold underline hover:no-underline"
-            onClick={clearStorageError}
-          >
-            Закрыть
-          </button>
-        </div>
-      ) : null}
-
       <div className="flex flex-wrap gap-2">
         <Button
           variant="ghost"
-          onClick={() => downloadText("cqa-results.json", JSON.stringify(resultRows(rows, evaluations), null, 2), "application/json")}
+          onClick={() => downloadText("cqa-results.json", JSON.stringify(resultRows(rows, evaluations, { versionId: version?.id }), null, 2), "application/json")}
         >
           Экспорт JSON
         </Button>
         <Button
           variant="ghost"
-          onClick={() => downloadText("cqa-results.csv", resultsToCsv(resultRows(rows, evaluations)), "text/csv;charset=utf-8")}
+          onClick={() => downloadText("cqa-results.csv", resultsToCsv(resultRows(rows, evaluations, { versionId: version?.id })), "text/csv;charset=utf-8")}
         >
           Экспорт CSV
         </Button>

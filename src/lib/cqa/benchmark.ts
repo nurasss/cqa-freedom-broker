@@ -1,5 +1,6 @@
 import type { Answer, Conversation, Criterion, Evaluation } from "./types.ts";
 import { computeScore } from "./score.ts";
+import { latestEvaluation } from "./store.ts";
 
 export interface BenchmarkPair {
   id: string;
@@ -161,6 +162,7 @@ export interface ResultRow {
   model: string;
   promptVersion: string;
   checklistVersionId: string;
+  configHash: string;
   status: string;
   baseTotal: number | null;
   finalTotal: number | null;
@@ -170,15 +172,7 @@ export interface ResultRow {
   estimatedCostUsd: number;
   calls: number;
   answers: Record<string, string>;
-
-  // Additional fields for organizers & compatibility aliases
-  configHash: string;
-  conversation_id: string;
-  dataset_group_id: string;
-  prompt_version: string;
-  c08_flag: boolean;
   criteria: Record<string, CriterionDetail>;
-  details: Record<string, CriterionDetail>;
 }
 
 export function formatEvidenceQuotes(
@@ -202,11 +196,38 @@ export function csvCell(value: string | number | boolean | null | undefined): st
   return /[",;\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
-export function resultRows(conversations: Conversation[], evaluations: Evaluation[]): ResultRow[] {
+export interface ResultRowsOptions {
+  latestOnly?: boolean;
+  versionId?: string;
+}
+
+export function resultRows(
+  conversations: Conversation[],
+  evaluations: Evaluation[],
+  options: ResultRowsOptions = { latestOnly: true },
+): ResultRow[] {
+  const latestOnly = options.latestOnly ?? true;
   const byId = new Map(conversations.map((item) => [item.id, item]));
-  const targetEvals = conversations.length > 0
-    ? evaluations.filter((item) => byId.has(item.conversationId))
-    : evaluations;
+
+  let targetEvals: Evaluation[];
+  if (latestOnly) {
+    const candidateConvIds = conversations.length > 0
+      ? conversations.map((c) => c.id)
+      : [...new Set(evaluations.map((e) => e.conversationId))];
+
+    const picked: Evaluation[] = [];
+    for (const cId of candidateConvIds) {
+      const latest = latestEvaluation(evaluations, cId, options.versionId) ?? latestEvaluation(evaluations, cId);
+      if (latest && !picked.some((e) => e.id === latest.id)) {
+        picked.push(latest);
+      }
+    }
+    targetEvals = picked;
+  } else {
+    targetEvals = conversations.length > 0
+      ? evaluations.filter((item) => byId.has(item.conversationId))
+      : evaluations;
+  }
 
   return [...targetEvals]
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
@@ -230,30 +251,25 @@ export function resultRows(conversations: Conversation[], evaluations: Evaluatio
       const groupId = conversation?.datasetGroupId ?? "";
       return {
         conversationId: evaluation.conversationId,
-        conversation_id: evaluation.conversationId,
         externalId: conversation?.externalId ?? "",
         language: conversation?.language ?? "",
         channel: conversation?.channel ?? "",
         groupId,
-        dataset_group_id: groupId,
         source: evaluation.source,
         model: evaluation.model,
         promptVersion: evaluation.promptVersion,
-        prompt_version: evaluation.promptVersion,
         checklistVersionId: evaluation.checklistVersionId,
         configHash: evaluation.configHash ?? "",
         status: evaluation.status,
         baseTotal: evaluation.baseTotal,
         finalTotal: evaluation.finalTotal,
         critical: evaluation.finalCritical,
-        c08_flag: evaluation.finalCritical,
         promptTokens: evaluation.usage?.promptTokens ?? 0,
         completionTokens: evaluation.usage?.completionTokens ?? 0,
         estimatedCostUsd: evaluation.usage?.estimatedCostUsd ?? 0,
         calls: evaluation.usage?.calls ?? 0,
         answers: Object.fromEntries(results.map((result) => [result.criterionId, String(result.answer)])),
         criteria,
-        details: criteria,
       };
     });
 }
@@ -318,7 +334,7 @@ export function resultsToCsv(rows: ResultRow[]): string {
       ...ids.map((id) => row.answers[id] ?? ""),
       row.configHash,
       ...ids.flatMap((id) => {
-        const crit = row.criteria?.[id] ?? row.details?.[id];
+        const crit = row.criteria?.[id];
         return [
           crit?.reason ?? "",
           formatEvidenceQuotes(crit?.evidence),
