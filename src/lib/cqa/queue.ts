@@ -261,3 +261,21 @@ export async function runQueue<T>(options: QueueOptions<T>): Promise<QueueOutcom
     fatalMessage,
   };
 }
+
+export const activeBatchRunner = createBatchRunner();
+export let cancelBatchRequested = false;
+
+export function setCancelBatchRequested(value: boolean): void {
+  cancelBatchRequested = value;
+}
+
+export function canStartBatch(jobs: { status: string }[]): boolean {
+  return !jobs.some((j) => j.status === "running") && !activeBatchRunner.running;
+}
+
+export function isCostCapValid(costCap: number | string | undefined | null): boolean {
+  if (costCap === "" || costCap === null || costCap === undefined) return false;
+  const num = Number(costCap);
+  return Number.isFinite(num) && num > 0;
+}
+

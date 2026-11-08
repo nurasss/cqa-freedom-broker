@@ -1,5 +1,6 @@
 import type { Conversation, Criterion } from "./types.ts";
 import type { DraftAnswer } from "./engine.ts";
+export { validateChecklist } from "./score.ts";
 import {
   canonicalSpeaker,
   confirmRe,
@@ -187,8 +188,11 @@ export function rulesDrafts(criteria: Criterion[], conversation: Conversation): 
     if (criterion.answerType === "yes_no" || criterion.answerType === "flag") {
       if (answer !== "yes" && answer !== "no") answer = "no";
     }
-    if (criterion.answerType === "yes_no_na" && answer !== "yes" && answer !== "no" && answer !== "na") {
-      answer = "no";
+    if (criterion.answerType === "yes_no_na") {
+      if (answer === "na" && !criterion.naAllowed) answer = "no";
+      if (answer !== "yes" && answer !== "no" && answer !== "na") {
+        answer = "no";
+      }
     }
     if (criterion.answerType === "scale") {
       const steps = criterion.scale?.steps ?? [];

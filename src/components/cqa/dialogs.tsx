@@ -2,7 +2,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AudioLines, Play, Trash2, Upload } from "lucide-react";
 import { parseImport } from "@/lib/cqa/engine";
 import { evaluateConversation, getLlmInfo, importOrganizerGroup, type LlmInfo } from "@/lib/cqa/ai-fns";
-import { createBatchRunner, mapCancelledItem } from "@/lib/cqa/queue";
+import {
+  activeBatchRunner,
+  canStartBatch,
+  cancelBatchRequested,
+  isCostCapValid,
+  mapCancelledItem,
+  setCancelBatchRequested,
+} from "@/lib/cqa/queue";
 import { filterConversations, getDatasetGroupStats, latestEvaluation, selectBatchTargets, useCqa } from "@/lib/cqa/store";
 import { resultRows, resultsToCsv } from "@/lib/cqa/benchmark";
 import { controlConversations } from "@/lib/cqa/control";
@@ -47,12 +54,12 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
   const [concurrency, setConcurrency] = useState(2);
   const [modelId, setModelId] = useState(MODEL_ID);
   const [llmInfo, setLlmInfo] = useState<LlmInfo | null>(null);
-  const [costCap, setCostCap] = useState(8);
+  const [costCap, setCostCap] = useState<number | "">(8);
   const [maxDialogs, setMaxDialogs] = useState<number | "">("");
   const [spent, setSpent] = useState(0);
-  const cancelRef = useRef(false);
-  const runnerRef = useRef(createBatchRunner());
   const fileRef = useRef<HTMLInputElement>(null);
+  const runningJob = jobs.find((j) => j.status === "running");
+  const isBatchRunning = Boolean(runningJob);
 
   useEffect(() => {
     getLlmInfo()
@@ -175,8 +182,10 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
 
   async function runBatch(mode: "heuristic" | "ai", onlyFailed = false) {
     const state = useCqa.getState();
+    if (!canStartBatch(state.jobs)) return;
+    if (mode === "ai" && !isCostCapValid(costCap)) return;
     const versionNow = state.versions.find((item) => item.id === state.activeVersionId);
-    if (!versionNow || runnerRef.current.running) return;
+    if (!versionNow) return;
     const frozen = {
       id: versionNow.id,
       configHash: versionNow.configHash,
@@ -214,19 +223,19 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
       );
       return;
     }
-    cancelRef.current = false;
+    setCancelBatchRequested(false);
     const jobId = startJob(mode, targets.length);
     setBusy(true);
     setConfirmAi(false);
     let spentNow = 0;
     setSpent(0);
     try {
-      const outcome = await runnerRef.current.run({
+      const outcome = await activeBatchRunner.run({
         items: targets.map((conversation) => ({ id: conversation.id, payload: conversation })),
         concurrency: mode === "ai" ? concurrency : 4,
         maxAttempts: 3,
         retryDelayMs: mode === "ai" ? 600 : 0,
-        costCap: mode === "ai" ? costCap : undefined,
+        costCap: mode === "ai" ? Number(costCap) : undefined,
         estimateCostUsd:
           mode === "ai"
             ? avgCostPerDialog > 0
@@ -235,9 +244,9 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
                 ? 0
                 : DEFAULT_COST_ESTIMATE_USD
             : 0,
-        isCancelled: () => cancelRef.current,
+        isCancelled: () => cancelBatchRequested,
         onUpdate: (items) => {
-          const resolvedItems = items.map((item) => (cancelRef.current ? mapCancelledItem(item) : item));
+          const resolvedItems = items.map((item) => (cancelBatchRequested ? mapCancelledItem(item) : item));
           const needsReview = resolvedItems.filter((item) => item.status === "needs_review").length;
           const failed = resolvedItems.filter((item) => item.status === "failed").length;
           const completed = resolvedItems.filter((item) => item.status === "completed" || item.status === "needs_review").length;
@@ -516,15 +525,15 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
       </div>
 
       <div className="flex flex-wrap gap-2">
-        <Button variant="ghost" disabled={busy || !rows.length} onClick={() => void runBatch("heuristic")}>
+        <Button variant="ghost" disabled={busy || isBatchRunning || !rows.length} onClick={() => void runBatch("heuristic")}>
           <Play className="size-4" />
           Эвристика по списку
         </Button>
-        <Button variant="primary" disabled={busy || !rows.length} onClick={() => setConfirmAi(true)}>
+        <Button variant="primary" disabled={busy || isBatchRunning || !rows.length} onClick={() => setConfirmAi(true)}>
           AI по списку
         </Button>
-        <Button variant="ghost" disabled={busy} onClick={() => void runBatch("ai", true)}>
-          Повторить неудачные
+        <Button variant="ghost" disabled={busy || isBatchRunning} onClick={() => void runBatch("ai", true)}>
+          Повторить ошибки
         </Button>
         <label className="flex items-center gap-2 text-sm text-muted">
           Параллельно
@@ -582,15 +591,23 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
           <input
             className="h-11 w-20 rounded-xl border border-line px-2 text-ink"
             type="number"
-            min={0}
+            min={0.01}
             step={0.5}
             aria-label="лимит расходов"
             value={costCap}
-            onChange={(event) => setCostCap(Math.max(0, Number(event.target.value) || 0))}
+            onChange={(event) => {
+              const val = event.target.value.trim();
+              if (!val) {
+                setCostCap("");
+              } else {
+                const num = Number(val);
+                setCostCap(Number.isFinite(num) ? num : "");
+              }
+            }}
           />
         </label>
-        {busy ? (
-          <Button variant="quiet" onClick={() => (cancelRef.current = true)}>
+        {isBatchRunning ? (
+          <Button variant="quiet" onClick={() => { setCancelBatchRequested(true); }}>
             Остановить
           </Button>
         ) : null}
@@ -601,16 +618,30 @@ export function DialogsView({ onOpen }: { onOpen: (id: string) => void }) {
           {aiEvaluationsWithCost.length > 0
             ? `Примерная стоимость: ~$${(avgCostPerDialog * candidateTargets.length).toFixed(4)} (средняя прошлых AI-оценок $${avgCostPerDialog.toFixed(4)} × ${candidateTargets.length}). `
             : "Прошлых AI-оценок нет, примерная стоимость неизвестна. "}
-          Параллельность {concurrency}, лимит расходов ${costCap}. Повтор сети — до трёх попыток. Демо и эвристика не записываются как AI.
+          Параллельность {concurrency}, лимит расходов ${costCap || 0}. Повтор сети — до трёх попыток. Демо и эвристика не записываются как AI.
+          {!isCostCapValid(costCap) ? (
+            <p className="mt-2 text-xs font-semibold text-critical">Укажите лимит больше 0</p>
+          ) : null}
           <div className="mt-3 flex gap-2">
-            <Button onClick={() => void runBatch("ai")}>Запустить</Button>
+            <Button
+              disabled={!isCostCapValid(costCap) || isBatchRunning || busy}
+              title={!isCostCapValid(costCap) ? "Укажите лимит больше 0" : undefined}
+              onClick={() => void runBatch("ai")}
+            >
+              Запустить
+            </Button>
             <Button variant="ghost" onClick={() => setConfirmAi(false)}>
               Отмена
             </Button>
           </div>
         </div>
       ) : null}
-      {job ? (
+      {runningJob ? (
+        <p className="text-sm font-semibold text-accent">
+          Идёт пакетная оценка: {runningJob.completed} из {runningJob.total}
+        </p>
+      ) : null}
+      {job && !runningJob ? (
         <p className="text-sm text-muted">
           Пакет {job.mode === "ai" ? "AI" : "эвристика"}: {job.completed}/{job.total}, ошибок {job.failed}, на проверке {job.needsReview ?? 0}, статус {job.status}
           {job.mode === "ai" ? `, расход $${spent.toFixed(4)}` : ""}

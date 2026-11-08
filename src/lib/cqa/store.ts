@@ -237,10 +237,12 @@ export function materialize(
     .slice()
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const reasonOverride = new Map<string, string>();
+  const criteriaWithDecision = new Set<string>();
   for (const decision of related) {
-    if (decision.action !== "overridden") continue;
     const appeal = relatedAppeals.find((item) => item.id === decision.appealId);
     if (!appeal) continue;
+    criteriaWithDecision.add(appeal.criterionId);
+    if (decision.action !== "overridden") continue;
     const criterion = version.criteria.find((item) => item.id === appeal.criterionId);
     if (!criterion || !answerAllowed(criterion, decision.newAnswer)) continue;
     answers[appeal.criterionId] = decision.newAnswer;
@@ -250,12 +252,14 @@ export function materialize(
   const finalResults = evaluation.baseResults.map((result) => {
     const line = outcome.lines.find((item) => item.criterionId === result.criterionId);
     const answer = answers[result.criterionId] ?? result.answer;
+    const hasDecisionForThisCriterion = criteriaWithDecision.has(result.criterionId);
+    const critical = Boolean(line?.critical) && (result.validationStatus === "ok" || hasDecisionForThisCriterion);
     return {
       ...result,
       answer,
       reason: reasonOverride.get(result.criterionId) ?? result.reason,
       isNa: answer === "na",
-      critical: line?.critical ?? false,
+      critical,
       normalized: line?.normalized ?? null,
       contribution: line?.contribution ?? null,
       weight: line?.weight ?? result.weight,
@@ -265,12 +269,13 @@ export function materialize(
       judgeNote: result.judgeNote,
     };
   });
+  const finalCritical = finalResults.some((r) => r.critical);
   return {
     ...evaluation,
     finalResults,
     finalTotal: outcome.status === "ok" ? outcome.total : outcome.status === "not_scorable" ? null : evaluation.finalTotal,
     finalRaw: outcome.raw,
-    finalCritical: outcome.critical,
+    finalCritical,
     status:
       outcome.status === "not_scorable"
         ? "not_scorable"

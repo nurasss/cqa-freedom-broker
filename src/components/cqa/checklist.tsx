@@ -195,8 +195,18 @@ export function ChecklistView() {
               <input
                 type="checkbox"
                 checked={criterion.naAllowed}
-                disabled={criterion.answerType === "yes_no" || criterion.answerType === "flag"}
-                onChange={(event) => patch(criterion.id, { naAllowed: event.target.checked, answerType: event.target.checked && criterion.answerType === "scale" ? "scale" : criterion.answerType })}
+                disabled={criterion.answerType === "flag"}
+                onChange={(event) => {
+                  const checked = event.target.checked;
+                  if (criterion.answerType === "scale") {
+                    patch(criterion.id, { naAllowed: checked });
+                  } else {
+                    patch(criterion.id, {
+                      naAllowed: checked,
+                      answerType: checked ? "yes_no_na" : "yes_no",
+                    });
+                  }
+                }}
               />
               N/A допустим
             </label>

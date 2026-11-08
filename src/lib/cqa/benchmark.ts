@@ -206,27 +206,29 @@ export function resultRows(
   evaluations: Evaluation[],
   options: ResultRowsOptions = { latestOnly: true },
 ): ResultRow[] {
+  if (conversations.length === 0) return [];
+
   const latestOnly = options.latestOnly ?? true;
   const byId = new Map(conversations.map((item) => [item.id, item]));
 
   let targetEvals: Evaluation[];
   if (latestOnly) {
-    const candidateConvIds = conversations.length > 0
-      ? conversations.map((c) => c.id)
-      : [...new Set(evaluations.map((e) => e.conversationId))];
-
     const picked: Evaluation[] = [];
-    for (const cId of candidateConvIds) {
-      const latest = latestEvaluation(evaluations, cId, options.versionId) ?? latestEvaluation(evaluations, cId);
+    for (const c of conversations) {
+      const latest = options.versionId
+        ? latestEvaluation(evaluations, c.id, options.versionId)
+        : latestEvaluation(evaluations, c.id);
       if (latest && !picked.some((e) => e.id === latest.id)) {
         picked.push(latest);
       }
     }
     targetEvals = picked;
   } else {
-    targetEvals = conversations.length > 0
-      ? evaluations.filter((item) => byId.has(item.conversationId))
-      : evaluations;
+    targetEvals = evaluations.filter(
+      (item) =>
+        byId.has(item.conversationId) &&
+        (!options.versionId || item.checklistVersionId === options.versionId),
+    );
   }
 
   return [...targetEvals]

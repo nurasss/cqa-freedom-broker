@@ -20,7 +20,9 @@ export function allowedAnswers(criterion: Criterion): Answer[] {
     const steps = criterion.scale?.steps ?? [];
     return criterion.naAllowed ? [...steps, "na"] : [...steps];
   }
-  if (criterion.answerType === "yes_no_na") return ["yes", "no", "na"];
+  if (criterion.answerType === "yes_no_na") {
+    return criterion.naAllowed ? ["yes", "no", "na"] : ["yes", "no"];
+  }
   return ["yes", "no"];
 }
 
@@ -219,6 +221,9 @@ export function validateChecklist(criteria: Criterion[]): string[] {
       if (max !== Math.max(...steps)) errors.push(`${criterion.id}: max должен быть верхней ступенью`);
     } else if (criterion.scale) {
       errors.push(`${criterion.id}: шкала только у типа scale`);
+    }
+    if (criterion.answerType === "yes_no_na" && !criterion.naAllowed) {
+      errors.push(`${criterion.id}: тип yes_no_na требует N/A, выберите yes_no`);
     }
     if (criterion.naAllowed && (criterion.answerType === "yes_no" || criterion.answerType === "flag")) {
       errors.push(`${criterion.id}: N/A запрещён для этого типа`);

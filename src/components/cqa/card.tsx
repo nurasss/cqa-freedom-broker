@@ -22,6 +22,7 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
   const saveModelEvaluation = useCqa((state) => state.saveModelEvaluation);
   const submitAppeal = useCqa((state) => state.submitAppeal);
   const decideAppeal = useCqa((state) => state.decideAppeal);
+  const isBatchRunning = useCqa((state) => state.jobs.some((j) => j.status === "running"));
   const [highlight, setHighlight] = useState<number | null>(null);
   const [range, setRange] = useState<{ from: number; to: number } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -202,7 +203,7 @@ export function CardView({ conversationId, onBack }: { conversationId: string; o
       ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button disabled={busy} onClick={() => void onEvaluateAi()}>
+        <Button disabled={busy || isBatchRunning} onClick={() => void onEvaluateAi()}>
           {busy ? "Считаю…" : "Оценить AI"}
         </Button>
         {llmInfo ? (
